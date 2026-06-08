@@ -443,6 +443,41 @@ class SpaceTimeMonitor:
 
         return code_def_id
 
+    def _resolve_function_object(self, frame, code: types.CodeType):
+        """Resolve the live function object for an executing frame/code pair."""
+        func_obj = frame.f_globals.get(code.co_name)
+        if callable(func_obj) and getattr(func_obj, "__code__", None) is code:
+            return func_obj
+
+        module = inspect.getmodule(frame)
+        qualname_parts = code.co_qualname.split(".")
+        if module is not None:
+            candidate = module
+            for part in qualname_parts:
+                if part == "<locals>":
+                    candidate = None
+                    break
+                candidate = getattr(candidate, part, None)
+                if candidate is None:
+                    break
+            if callable(candidate) and getattr(candidate, "__code__", None) is code:
+                return candidate
+
+        owner = frame.f_locals.get("self")
+        if owner is not None:
+            candidate = getattr(owner.__class__, code.co_name, None)
+            if callable(candidate) and getattr(candidate, "__code__", None) is code:
+                return candidate
+
+        return func_obj if callable(func_obj) else None
+
+    def _get_code_definition_for_frame(self, frame, code: types.CodeType) -> str | None:
+        """Get the code definition ID for the currently executing code object."""
+        func_obj = self._resolve_function_object(frame, code)
+        if func_obj is not None:
+            return self._get_cached_code_definition(func_obj, code.co_name)
+        return None
+
     def create_stack_snapshot(
         self,
         call_id: int,
@@ -964,6 +999,9 @@ class SpaceTimeMonitor:
             if code.co_name in self.skip_one_line_snapshot:
                 self.skip_one_line_snapshot.remove(code.co_name)
                 return
+
+            code_def_id = self._get_code_definition_for_frame(frame, code)
+
             # Get function's locals and globals
             function_locals = {}
             globals_used = {}
@@ -1005,7 +1043,8 @@ class SpaceTimeMonitor:
                     line_number,
                     function_locals,
                     globals_used,
-                    order_in_call=snapshots_count
+                    order_in_call=snapshots_count,
+                    code_definition_id=code_def_id,
                 )
 
                 # Increment the snapshot counter for this function call
