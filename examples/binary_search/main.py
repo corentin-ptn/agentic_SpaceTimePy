@@ -2,10 +2,10 @@
 """
 Basic example demonstrating SpaceTimePy.
 """
-import spacetimepy
+import spacetimepy 
 
 
-@spacetimepy.pymonitor(mode="line")
+@spacetimepy.line()
 def binary_search(arr, target):
     left, right = 0, len(arr) - 1
     while left <= right:

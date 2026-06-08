@@ -1,6 +1,6 @@
 *.db
 *.json
-
+*.backup
 
 # Python
 __pycache__/
