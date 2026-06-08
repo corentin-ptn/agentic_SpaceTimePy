@@ -23,14 +23,12 @@ dependencies = [
     "pandas>=2.3.1",
     "networkx>=3.5",
     "sqlalchemy>=2.0.0",
-    "tqdm>=4.67.1"
+    "tqdm>=4.67.1",
 ]
 
 [project.scripts]
 web-spacetimepy = "spacetimepy.interface.web.explorer:main"
-game-explorer = "spacetimepy.interface.gameexplorer.gameexplorer:main"
 live-game-explorer = "spacetimepy.interface.gameexplorer.livegameexplorer:main"
-live-game-explorer-qt = "spacetimepy.interface.gameexplorer.livegameexplorer_qt:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spacetimepy"]
@@ -46,7 +44,7 @@ chlorophyll = { git = "https://github.com/jbdoderlein/chlorophyll" }
 # Optional groups to install only what you need. Example: `pip install .[game]`
 
 game = [
-    "pygame",
+    "pygame>=2.6.1",
     "chlorophyll",
     "sv-ttk>=2.6.1",
     "pillow>=11.2.1",
@@ -62,7 +60,6 @@ visualization = [
     "matplotlib>=3.10.3",
     "seaborn>=0.13.2",
     "pillow>=11.2.1",
-    "pyarrow>=20.0.0",
     "fastparquet>=2024.11.0",
     "scipy>=1.16.0",
 ]

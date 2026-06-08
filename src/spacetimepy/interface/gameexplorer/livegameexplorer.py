@@ -12,6 +12,7 @@ import os
 import sys
 import tkinter as tk
 from tkinter import ttk, messagebox
+import tkinter.font as tkfont
 from typing import Any, TypedDict
 
 from PIL import Image, ImageTk
@@ -33,6 +34,26 @@ import pygame
 import contextlib
 
 HIDDEN_PYGAME = False
+
+# Font configuration. Adjust these values to resize the interface.
+UI_FONT_FAMILY = "Arial"
+CODE_FONT_FAMILY = "monospace"
+INFO_FONT_FAMILY = "Courier"
+
+UI_FONT_SIZE = 11
+TREE_FONT_SIZE = 11
+INFO_FONT_SIZE = 11
+SESSION_INFO_FONT_SIZE = 9
+HELP_FONT_SIZE = 8
+CODE_FONT_SIZE = 11
+
+TREE_ROW_PADDING = 8
+
+
+def font_tuple(family: str, size: int, weight: str = "normal") -> tuple[str, int, str]:
+    return (family, size, weight)
+
+
 original_set_mode = pygame.display.set_mode
 def modified_set_mode(*args, **kwargs):
     if 'flags' not in kwargs and HIDDEN_PYGAME:
@@ -47,7 +68,21 @@ class TwoHandleRange(tk.Canvas):
 
     Emits callback(handle_name: 'start'|'end', value:int) when a handle moves.
     """
-    def __init__(self, parent, min_val: int, max_val: int, start: int, end: int, *, width: int = 400, height: int = 36, handle_radius: int = 6, callback=None, **kwargs):
+    def __init__(
+        self,
+        parent,
+        min_val: int,
+        max_val: int,
+        start: int,
+        end: int,
+        *,
+        width: int = 400,
+        height: int = 36,
+        handle_radius: int = 6,
+        track_width: int = 8,
+        callback=None,
+        **kwargs,
+    ):
         super().__init__(parent, width=width, height=height, highlightthickness=0, **kwargs)
         self.min_val = min_val
         self.max_val = max_val
@@ -59,18 +94,30 @@ class TwoHandleRange(tk.Canvas):
         self.width = width
         self.height = height
         self.handle_radius = handle_radius
+        self.track_width = track_width
         self.callback = callback
 
         self._dragging = None  # 'start' or 'end' or None
 
-        self._pad_x = 10
+        self._pad_x = handle_radius + max(4, track_width // 2)
         self._track_y = height // 2
 
         self._draw_all()
 
+        self.bind('<Configure>', self._on_configure)
         self.bind('<Button-1>', self._on_click)
         self.bind('<B1-Motion>', self._on_drag)
         self.bind('<ButtonRelease-1>', self._on_release)
+
+    def _on_configure(self, event):
+        new_width = max(1, event.width)
+        new_height = max(1, event.height)
+        if new_width == self.width and new_height == self.height:
+            return
+        self.width = new_width
+        self.height = new_height
+        self._track_y = new_height // 2
+        self._draw_all()
 
     def _val_to_x(self, val: int) -> int:
         span = max(1, self.max_val - self.min_val)
@@ -92,11 +139,11 @@ class TwoHandleRange(tk.Canvas):
         right = self.width - self._pad_x
         y = self._track_y
         # track background
-        self.create_line(left, y, right, y, fill='#d0d0d0', width=8, capstyle='round')
+        self.create_line(left, y, right, y, fill='#d0d0d0', width=self.track_width, capstyle='round')
         # selected range
         sx = self._val_to_x(self.start)
         ex = self._val_to_x(self.end)
-        self.create_line(sx, y, ex, y, fill='#4a90e2', width=8, capstyle='round')
+        self.create_line(sx, y, ex, y, fill='#4a90e2', width=self.track_width, capstyle='round')
         # handles
         r = self.handle_radius
         self.create_oval(sx - r, y - r, sx + r, y + r, fill='#ffffff', outline='#666666', width=1, tags=('start',))
@@ -1071,11 +1118,69 @@ class GameExplorer:
         # For now, we'll recreate them in the UI creation
         pass
 
+    def _configure_fonts(self):
+        """Apply the module-level font configuration to Tk and ttk widgets."""
+        if not self.root:
+            return
+
+        ui_font = font_tuple(UI_FONT_FAMILY, UI_FONT_SIZE)
+        text_font = font_tuple(CODE_FONT_FAMILY, CODE_FONT_SIZE)
+        heading_font = font_tuple(UI_FONT_FAMILY, UI_FONT_SIZE, "bold")
+        small_font = font_tuple(UI_FONT_FAMILY, HELP_FONT_SIZE)
+        tree_font = font_tuple(UI_FONT_FAMILY, TREE_FONT_SIZE)
+
+        self.root.option_add("*Font", ui_font)
+
+        named_fonts = {
+            "TkDefaultFont": ui_font,
+            "TkTextFont": text_font,
+            "TkFixedFont": text_font,
+            "TkMenuFont": ui_font,
+            "TkHeadingFont": heading_font,
+            "TkCaptionFont": ui_font,
+            "TkSmallCaptionFont": small_font,
+            "TkIconFont": ui_font,
+            "TkTooltipFont": ui_font,
+        }
+        for name, value in named_fonts.items():
+            with contextlib.suppress(tk.TclError):
+                tkfont.nametofont(name).configure(family=value[0], size=value[1], weight=value[2])
+
+        style = ttk.Style(self.root)
+        style.configure(".", font=ui_font)
+        style.configure("TButton", font=ui_font)
+        style.configure("TCheckbutton", font=ui_font)
+        style.configure("TLabel", font=ui_font)
+        style.configure("TLabelframe.Label", font=heading_font)
+        style.configure("Treeview", font=tree_font)
+        style.configure("Treeview.Heading", font=heading_font)
+
+        tree_linespace = tkfont.Font(root=self.root, font=tree_font).metrics("linespace")
+        style.configure("Treeview", rowheight=tree_linespace + TREE_ROW_PADDING)
+
+    def _ui_linespace(self) -> int:
+        """Return the configured UI font line height in pixels."""
+        root = self.root if self.root else None
+        return tkfont.Font(root=root, font=font_tuple(UI_FONT_FAMILY, UI_FONT_SIZE)).metrics("linespace")
+
+    def _slider_metrics(self) -> dict[str, int]:
+        """Sizes for Tk Scale and the range canvas, derived from the UI font."""
+        linespace = self._ui_linespace()
+        return {
+            "range_height": max(30, linespace + 16),
+            "range_handle_radius": max(5, linespace // 4),
+            "range_track_width": max(6, linespace // 3),
+            "scale_height": max(48, linespace * 3),
+            "scale_sliderlength": max(18, linespace),
+            "scale_width": max(10, linespace // 2),
+        }
+
     def _create_ui(self):
         """Create the Tkinter UI"""
         self.root = tk.Tk()
         self.root.title(self.window_title)
         self.root.geometry(self.window_geometry)
+        self._configure_fonts()
 
         # Main frame
         main_frame = ttk.Frame(self.root)
@@ -1133,7 +1238,7 @@ class GameExplorer:
         self.info_label = ttk.Label(
             info_frame,
             text="Loading...",
-            font=("Courier", 9)
+            font=font_tuple(INFO_FONT_FAMILY, INFO_FONT_SIZE)
         )
         self.info_label.pack(anchor=tk.W, pady=(5, 0))
 
@@ -1206,7 +1311,8 @@ class GameExplorer:
                 self.code_editor = CodeView(
                     code_editor_frame,
                     lexer=pygments.lexers.PythonLexer,
-                    color_scheme="spacetimepy-light"
+                    color_scheme="spacetimepy-light",
+                    font=font_tuple(CODE_FONT_FAMILY, CODE_FONT_SIZE)
                 )
                 self.code_editor.pack(fill=tk.BOTH, expand=True)
 
@@ -1218,7 +1324,7 @@ class GameExplorer:
             except Exception as e:
                 print(f"Error creating CodeView: {e}")
                 # Fall back to a regular Text widget
-                self.code_editor = tk.Text(code_editor_frame)
+                self.code_editor = tk.Text(code_editor_frame, font=font_tuple(CODE_FONT_FAMILY, CODE_FONT_SIZE))
                 self.code_editor.pack(fill=tk.BOTH, expand=True)
 
                 # Bind modification events
@@ -1227,7 +1333,7 @@ class GameExplorer:
                 self.code_editor.bind('<Control-s>', self._on_ctrl_s)
         else:
             # Use regular Text widget as fallback
-            self.code_editor = tk.Text(code_editor_frame)
+            self.code_editor = tk.Text(code_editor_frame, font=font_tuple(CODE_FONT_FAMILY, CODE_FONT_SIZE))
             self.code_editor.pack(fill=tk.BOTH, expand=True)
 
             # Bind modification events
@@ -1255,7 +1361,11 @@ class GameExplorer:
             lambda e: sliders_canvas.configure(scrollregion=sliders_canvas.bbox("all"))
         )
 
-        sliders_canvas.create_window((0, 0), window=self.sliders_frame, anchor="nw")
+        sliders_window = sliders_canvas.create_window((0, 0), window=self.sliders_frame, anchor="nw")
+        sliders_canvas.bind(
+            "<Configure>",
+            lambda e: sliders_canvas.itemconfigure(sliders_window, width=e.width)
+        )
         sliders_canvas.configure(yscrollcommand=sliders_scrollbar.set)
 
         sliders_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -1332,12 +1442,13 @@ class GameExplorer:
                 if branch_point_index is not None:
                     info_text += f" at frame {branch_point_index + 1}"
 
-            info_label = ttk.Label(session_frame, text=info_text, font=("Arial", 9))
+            info_label = ttk.Label(session_frame, text=info_text, font=font_tuple(UI_FONT_FAMILY, SESSION_INFO_FONT_SIZE))
             info_label.pack(anchor=tk.W)
 
             # Slider container with proper alignment
             slider_container = ttk.Frame(session_frame)
             slider_container.pack(fill=tk.X, pady=(5, 0))
+            slider_metrics = self._slider_metrics()
 
             # Add comparison and stroboscopic checkboxes next to slider
             checkbox_frame = ttk.Frame(slider_container)
@@ -1378,40 +1489,38 @@ class GameExplorer:
 
             # Calculate slider positioning for branching visualization
             if is_branch and branch_point_index is not None:
-                # For branch sessions, create offset and reduced size slider
+                # For branch sessions, place the slider on the same relative
+                # timeline as the parent session.
                 parent_id = rel['parent_session_id']
                 if parent_id in self.sessions_data:
                     parent_calls_count = len(self.sessions_data[parent_id]['calls'])
 
-                    # Calculate proportional offset and width
-                    total_width = 600  # Base slider width
-                    offset_ratio = branch_point_index / parent_calls_count if parent_calls_count > 0 else 0
-                    width_ratio = len(calls) / parent_calls_count if parent_calls_count > 0 else 1
+                    timeline_span = max(1, parent_calls_count)
+                    offset_ratio = max(0.0, min(1.0, branch_point_index / timeline_span))
+                    width_ratio = max(0.02, min(1.0 - offset_ratio, len(calls) / timeline_span))
 
-                    offset_pixels = int(total_width * offset_ratio)
-                    slider_width = int(total_width * width_ratio)
-
-                    # Add spacing frame for offset
-                    if offset_pixels > 0:
-                        spacing_frame = ttk.Frame(slider_container, width=offset_pixels)
-                        spacing_frame.pack(side=tk.LEFT)
-                        spacing_frame.pack_propagate(False)
-
-                    # Create slider frame
                     slider_frame = ttk.Frame(slider_container)
-                    slider_frame.pack(side=tk.LEFT)
+                    slider_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+                    slider_frame.columnconfigure(1, weight=1)
 
-                    ttk.Label(slider_frame, text="Frame:").pack(side=tk.LEFT)
+                    ttk.Label(slider_frame, text="Frame:").grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
+
+                    timeline_frame = ttk.Frame(slider_frame)
+                    timeline_frame.grid(row=0, column=1, sticky=tk.EW)
+                    timeline_frame.configure(height=slider_metrics["scale_height"])
+                    timeline_frame.grid_propagate(False)
 
                     slider = tk.Scale(
-                        slider_frame,
+                        timeline_frame,
                         from_=0,
                         to=len(calls) - 1,
                         orient=tk.HORIZONTAL,
                         command=lambda value, sid=session_id: self._on_slider_change(sid, value),
-                        length=max(slider_width, 100)  # Minimum width of 100
+                        font=font_tuple(UI_FONT_FAMILY, UI_FONT_SIZE),
+                        sliderlength=slider_metrics["scale_sliderlength"],
+                        width=slider_metrics["scale_width"],
                     )
-                    slider.pack(side=tk.LEFT, padx=(10, 0))
+                    slider.place(relx=offset_ratio, rely=0, relwidth=width_ratio, relheight=1)
                 else:
                     # Fallback to normal slider if parent not found
                     slider = self._create_normal_slider(slider_container, session_id, calls, length=400)
@@ -1534,15 +1643,15 @@ class GameExplorer:
 
         Returns the main slider widget.
         """
-        # Use a vertical layout: main slider on top, two-handle range below
+        metrics = self._slider_metrics()
+
+        # Use one grid so the main slider and range selector start in the same column.
         slider_frame = ttk.Frame(parent_frame)
-        slider_frame.pack(fill=tk.X)
+        slider_frame.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        slider_frame.columnconfigure(1, weight=1)
 
-        # Top row: label + main slider
-        top_row = ttk.Frame(slider_frame)
-        top_row.pack(fill=tk.X)
-
-        ttk.Label(top_row, text="Frame:").pack(side=tk.LEFT)
+        frame_label = ttk.Label(slider_frame, text="Frame:")
+        frame_label.grid(row=0, column=0, sticky=tk.W, padx=(0, 10))
 
         # Ensure range vars exist
         if session_id not in self.range_start:
@@ -1552,18 +1661,22 @@ class GameExplorer:
 
         # Main slider
         slider = tk.Scale(
-            top_row,
+            slider_frame,
             from_=0,
             to=max(0, len(calls) - 1),
             orient=tk.HORIZONTAL,
             command=lambda value, sid=session_id: self._on_slider_change(sid, value),
-            length=length
+            length=length,
+            font=font_tuple(UI_FONT_FAMILY, UI_FONT_SIZE),
+            sliderlength=metrics["scale_sliderlength"],
+            width=metrics["scale_width"],
         )
-        slider.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(10, 0))
+        slider.grid(row=0, column=1, sticky=tk.EW)
 
-        # Bottom row: two-handle range full-width beneath the main slider
+        # Bottom row: two-handle range directly beneath the main slider.
         bottom_row = ttk.Frame(slider_frame)
-        bottom_row.pack(fill=tk.X, pady=(6, 0))
+        bottom_row.grid(row=1, column=1, sticky=tk.EW, pady=(2, 0))
+        bottom_row.columnconfigure(0, weight=1)
 
         # Callback invoked when a handle moves: ('start'|'end', value)
         def _range_moved(handle_name, val):
@@ -1585,16 +1698,18 @@ class GameExplorer:
             start=self.range_start[session_id].get(),
             end=self.range_end[session_id].get(),
             width=length,
-            height=36,
-            callback=_range_moved
+            height=metrics["range_height"],
+            handle_radius=metrics["range_handle_radius"],
+            track_width=metrics["range_track_width"],
+            callback=_range_moved,
         )
-        two_range.pack(fill=tk.X, expand=True)
+        two_range.grid(row=0, column=0, sticky=tk.EW)
 
         # Store widgets for potential future use
         self.session_range_widgets[session_id] = {
             'two_range': two_range,
             'slider_frame': slider_frame,
-            'top_row': top_row,
+            'frame_label': frame_label,
             'bottom_row': bottom_row
         }
 
@@ -1661,11 +1776,11 @@ class GameExplorer:
         help_frame.pack(fill=tk.X, pady=(0, 5))
 
         ttk.Label(help_frame, text="Ghosts: Number of phantom frames",
-                 font=("Arial", 8), foreground="gray").pack(side=tk.LEFT)
+                 font=font_tuple(UI_FONT_FAMILY, HELP_FONT_SIZE), foreground="gray").pack(side=tk.LEFT)
         ttk.Label(help_frame, text="Offset: Frame step size",
-                 font=("Arial", 8), foreground="gray").pack(side=tk.LEFT, padx=(20, 0))
+                 font=font_tuple(UI_FONT_FAMILY, HELP_FONT_SIZE), foreground="gray").pack(side=tk.LEFT, padx=(20, 0))
         ttk.Label(help_frame, text="Time: Past(-100) ↔ Future(+100)",
-                 font=("Arial", 8), foreground="gray").pack(side=tk.LEFT, padx=(20, 0))
+                 font=font_tuple(UI_FONT_FAMILY, HELP_FONT_SIZE), foreground="gray").pack(side=tk.LEFT, padx=(20, 0))
 
         return control_panel
 
@@ -2309,6 +2424,7 @@ class GameExplorer:
             # This is where the magic happens
             import sv_ttk
             sv_ttk.set_theme("light")
+            self._configure_fonts()
             self.root.mainloop()
 
         # Clean up
