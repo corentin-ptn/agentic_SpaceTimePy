@@ -41,7 +41,10 @@ def generate_line_mapping(code_path_1:str, code_path_2:str) -> tuple[dict, dict,
     mapping_v1_to_v2 = {}
     mapping_v2_to_v1 = {}
     modified_lines = []
-    regex = r"\[.*\]"
+    # GumTree emits character-index ranges like "[123,456]". Be strict here:
+    # code/text itself may contain other bracketed content (e.g. list literals
+    # in docstrings like "[1.0, 2.0]" or type hints like "List[float]").
+    regex = r"\[(\d+),\s*(\d+)\]"
 
 
     for section in diff.split('==='):
@@ -49,7 +52,7 @@ def generate_line_mapping(code_path_1:str, code_path_2:str) -> tuple[dict, dict,
         if section.startswith('insert-tree'):
             data = section.split("---")[1].strip()
             matches = re.finditer(regex, data, re.MULTILINE)
-            m1,m2 = tuple(map(int, next(matches).group(0)[1:-1].split(',')))
+            m1, m2 = tuple(map(int, next(matches).groups()))
             m1_line = get_line_number_from_index(foo2_code, m1)
             m2_line = get_line_number_from_index(foo2_code, m2)
             for i in range(m1_line, m2_line+1):
@@ -57,7 +60,7 @@ def generate_line_mapping(code_path_1:str, code_path_2:str) -> tuple[dict, dict,
         elif section.startswith('delete-tree'):
             data = section.split("---")[1].strip()
             matches = re.finditer(regex, data, re.MULTILINE)
-            m1,m2 = tuple(map(int, next(matches).group(0)[1:-1].split(',')))
+            m1, m2 = tuple(map(int, next(matches).groups()))
             m1_line = get_line_number_from_index(foo1_code, m1)
             m2_line = get_line_number_from_index(foo1_code, m2)
             for i in range(m1_line, m2_line+1):
@@ -65,7 +68,7 @@ def generate_line_mapping(code_path_1:str, code_path_2:str) -> tuple[dict, dict,
         elif section.startswith('update-node'):
             data = section.split("---")[1].strip()
             matches = re.finditer(regex, data, re.MULTILINE)
-            m1,m2 = tuple(map(int, next(matches).group(0)[1:-1].split(',')))
+            m1, m2 = tuple(map(int, next(matches).groups()))
             m1_line = get_line_number_from_index(foo1_code, m1)
             m2_line = get_line_number_from_index(foo1_code, m2)
             if m1_line == m2_line:
@@ -74,7 +77,10 @@ def generate_line_mapping(code_path_1:str, code_path_2:str) -> tuple[dict, dict,
         elif section.startswith('match'):
             data = section.split("---")[1].strip()
             matches = re.finditer(regex, data, re.MULTILINE)
-            m1,m2 = [tuple(map(int, match.group(0)[1:-1].split(','))) for match in matches]
+            ranges = [tuple(map(int, match.groups())) for match in matches]
+            if len(ranges) < 2:
+                continue
+            m1, m2 = ranges[0], ranges[1]
 
             m1_line_start = get_line_number_from_index(foo1_code, m1[0])
             m1_line_end = get_line_number_from_index(foo1_code, m1[1])
