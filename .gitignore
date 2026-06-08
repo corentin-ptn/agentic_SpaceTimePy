@@ -1,6 +1,9 @@
 *.db
 *.json
 *.backup
+.agents
+.codex
+.venv
 
 # Python
 __pycache__/

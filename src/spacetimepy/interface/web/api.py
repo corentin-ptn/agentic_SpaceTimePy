@@ -314,6 +314,29 @@ async def get_stack_recording(function_id: str):
             except Exception as e:
                 logger.error(f"Error retrieving code definition: {e}")
 
+        code_definitions = {}
+        snapshot_code_ids = {
+            stack_snapshot.effective_code_definition_id
+            for stack_snapshot in snapshots
+            if stack_snapshot.effective_code_definition_id is not None
+        }
+        if snapshot_code_ids:
+            try:
+                definitions = session.query(CodeDefinition).filter(
+                    CodeDefinition.id.in_(snapshot_code_ids)
+                ).all()
+                for definition in definitions:
+                    first_line_no = definition.first_line_no if definition.first_line_no is not None else function_call.line
+                    code_definitions[str(definition.id)] = {
+                        'content': definition.code_content,
+                        'module_path': definition.module_path,
+                        'type': definition.type,
+                        'name': definition.name,
+                        'first_line_no': first_line_no
+                    }
+            except Exception as e:
+                logger.error(f"Error retrieving snapshot code definitions: {e}")
+
         # Build a snapshots of function state for all recorded frames
         frames = []
         try:
@@ -380,6 +403,7 @@ async def get_stack_recording(function_id: str):
             function_dict["code"] = code
         return {
             "function": function_dict,
+            "code_definitions": code_definitions,
             "frames": frames
         }
     except ValueError as e:

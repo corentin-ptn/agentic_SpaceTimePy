@@ -19,6 +19,7 @@
             <div class="card">
                 <div class="card-header d-flex justify-content-between align-items-center">
                     <h5>Source Code</h5>
+                    <span id="code-version-label" class="badge bg-secondary"></span>
                 </div>
                 <div class="card-body p-0">
                     <pre><code id="code-container" class="language-python" style="height: 70vh; overflow: auto;"></code></pre>
@@ -47,7 +48,7 @@
                     </div>
                 </div>
                 <div class="card-body">
-                    <div id="timeline-container" style="height: 120px; overflow-x: auto;"></div>
+                    <div id="timeline-container" style="height: 150px; overflow-x: auto;"></div>
                 </div>
             </div>
 
@@ -119,6 +120,7 @@
     let isPlaying = false;
     let playInterval = null;
     let firstLineOffset = 1; // Store the line offset globally
+    let currentCodeDefinitionId = null;
     
     async function loadStackTrace(functionId) {
         try {
@@ -180,6 +182,65 @@
             document.getElementById('function-info').textContent = error.message;
         }
     }
+
+    function getSnapshotCodeDefinitionId(snapshot) {
+        return snapshot.code_definition_id || currentStackData?.function?.code_definition_id || null;
+    }
+
+    function getCodeForSnapshot(snapshot) {
+        const codeDefinitionId = getSnapshotCodeDefinitionId(snapshot);
+        if (codeDefinitionId && currentStackData?.code_definitions?.[codeDefinitionId]) {
+            return currentStackData.code_definitions[codeDefinitionId];
+        }
+        return currentStackData?.function?.code || null;
+    }
+
+    function getCodeDefinitionIds(snapshots) {
+        const ids = [];
+        snapshots.forEach(snapshot => {
+            const id = getSnapshotCodeDefinitionId(snapshot);
+            if (id && !ids.includes(id)) {
+                ids.push(id);
+            }
+        });
+        return ids;
+    }
+
+    function getCodeVersionLabel(codeDefinitionId, versionMap) {
+        if (!codeDefinitionId) {
+            return 'Code unknown';
+        }
+        const versionNumber = versionMap?.[codeDefinitionId];
+        if (versionNumber) {
+            return `v${versionNumber}`;
+        }
+        return `Code ${String(codeDefinitionId).slice(0, 7)}`;
+    }
+
+    function updateCodeForSnapshot(snapshot) {
+        const codeDefinitionId = getSnapshotCodeDefinitionId(snapshot);
+        if (codeDefinitionId !== null && codeDefinitionId === currentCodeDefinitionId) {
+            return;
+        }
+
+        const code = getCodeForSnapshot(snapshot);
+        const label = document.getElementById('code-version-label');
+        const versionIds = getCodeDefinitionIds(currentStackData.frames || []);
+        const versionMap = Object.fromEntries(versionIds.map((id, index) => [id, index + 1]));
+
+        if (code) {
+            firstLineOffset = typeof code === 'object' ? parseInt(code.first_line_no) || 1 : 1;
+            displayCode(code, firstLineOffset);
+            currentCodeDefinitionId = codeDefinitionId;
+            label.textContent = getCodeVersionLabel(codeDefinitionId, versionMap);
+            label.style.display = 'inline-block';
+        } else {
+            document.getElementById('code-container').textContent = 'Source code not available';
+            currentCodeDefinitionId = codeDefinitionId;
+            label.textContent = 'Code unavailable';
+            label.style.display = 'inline-block';
+        }
+    }
     
     function displayCode(code, firstLineNo) {
         const codeContainer = document.getElementById('code-container');
@@ -239,107 +300,43 @@
             timelineContainer.innerHTML = '<div class="alert alert-warning">No stack recording snapshots available</div>';
             return;
         }
-        
-        // Track execution order of lines and create a sequence array
-        const executionSequence = [];
-        snapshots.forEach((snapshot, index) => {
-            const lineNumber = snapshot.line || snapshot.line_number;
-            executionSequence.push({
-                index: index,
-                line: lineNumber
-            });
-        });
-        
-        // Find actual loops in the execution sequence
-        const loopConnections = [];
-        for (let i = 0; i < executionSequence.length - 1; i++) {
-            const current = executionSequence[i];
-            const next = executionSequence[i + 1];
-            
-            // If next line is smaller than current, it's a backward jump (loop)
-            if (next.line < current.line) {
-                console.log(`Found loop: ${current.line} -> ${next.line}`);
-                loopConnections.push({
-                    from: current.line,
-                    to: next.line
-                });
-            }
-        }
-        
-        // Group snapshots by line number for display
-        const lineGroups = {};
-        snapshots.forEach((snapshot, index) => {
-            const lineNumber = snapshot.line || snapshot.line_number;
-            if (!lineGroups[lineNumber]) {
-                lineGroups[lineNumber] = [];
-            }
-            lineGroups[lineNumber].push(index);
-        });
-        
-        // Get unique line numbers in order of first appearance
-        const orderedLines = [];
-        snapshots.forEach(snapshot => {
-            const lineNumber = snapshot.line || snapshot.line_number;
-            if (!orderedLines.includes(lineNumber)) {
-                orderedLines.push(lineNumber);
-            }
-        });
-        
-        // Clear the container and style it for proper scrolling
+
+        const versionIds = getCodeDefinitionIds(snapshots);
+        const versionMap = Object.fromEntries(versionIds.map((id, index) => [id, index + 1]));
+        const versionColors = ['#0d6efd', '#6f42c1', '#198754', '#fd7e14', '#20c997', '#d63384'];
+        const pointSpacing = 56;
+        const leftPadding = 36;
+        const rightPadding = 36;
+        const laneHeight = 30;
+        const baseY = 36;
+        const timelineWidth = Math.max(snapshots.length * pointSpacing + leftPadding + rightPadding, timelineContainer.clientWidth || 420);
+        const timelineHeight = Math.max(118, versionIds.length * laneHeight + 64);
+
         timelineContainer.innerHTML = '';
         timelineContainer.style.overflowX = 'auto';
-        timelineContainer.style.overflowY = 'hidden';
+        timelineContainer.style.overflowY = 'auto';
         timelineContainer.style.position = 'relative';
-        
-        // Create outer container with padding to prevent dots from being cut off
-        const outerContainer = document.createElement('div');
-        outerContainer.style.paddingLeft = '20px';
-        outerContainer.style.paddingRight = '20px';
-        outerContainer.style.position = 'relative';
-        outerContainer.style.width = 'max-content';
-        outerContainer.style.minWidth = '100%';
-        timelineContainer.appendChild(outerContainer);
-        
-        // Create timeline wrapper
+
         const timelineWrapper = document.createElement('div');
         timelineWrapper.className = 'timeline-wrapper';
         timelineWrapper.style.position = 'relative';
-        timelineWrapper.style.height = '100px';
-        timelineWrapper.style.marginTop = '10px';
-        
-        // Set the width based on number of points (at least 70px per point plus padding)
-        const timelineWidth = orderedLines.length * 70 + 40;
+        timelineWrapper.style.height = `${timelineHeight}px`;
         timelineWrapper.style.width = `${timelineWidth}px`;
-        
-        outerContainer.appendChild(timelineWrapper);
-        
-        // Create the base timeline line
-        const baseTimeline = document.createElement('div');
-        baseTimeline.className = 'timeline-line';
-        baseTimeline.style.position = 'absolute';
-        baseTimeline.style.height = '2px';
-        baseTimeline.style.backgroundColor = '#dee2e6';
-        baseTimeline.style.top = '30px';
-        baseTimeline.style.left = '0';
-        baseTimeline.style.right = '0';
-        baseTimeline.style.zIndex = '1';
-        timelineWrapper.appendChild(baseTimeline);
-        
-        // Create SVG for lines and arcs
+        timelineWrapper.style.minWidth = '100%';
+        timelineContainer.appendChild(timelineWrapper);
+
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('width', '100%');
-        svg.setAttribute('height', '100%');
+        svg.setAttribute('width', timelineWidth);
+        svg.setAttribute('height', timelineHeight);
         svg.style.position = 'absolute';
         svg.style.top = '0';
         svg.style.left = '0';
         svg.style.zIndex = '1';
         timelineWrapper.appendChild(svg);
-        
-        // Create defs for arrow markers
+
         const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
         svg.appendChild(defs);
-        
-        // Normal arrow marker
+
         const normalMarker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
         normalMarker.setAttribute('id', 'arrow-normal');
         normalMarker.setAttribute('viewBox', '0 0 10 10');
@@ -350,205 +347,172 @@
         normalMarker.setAttribute('orient', 'auto');
         normalMarker.innerHTML = '<path d="M 0 0 L 10 5 L 0 10 z" fill="#6c757d"/>';
         defs.appendChild(normalMarker);
-        
-        // Loop arrow marker (red)
-        const loopMarker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-        loopMarker.setAttribute('id', 'arrow-loop');
-        loopMarker.setAttribute('viewBox', '0 0 10 10');
-        loopMarker.setAttribute('refX', '9');
-        loopMarker.setAttribute('refY', '5');
-        loopMarker.setAttribute('markerWidth', '6');
-        loopMarker.setAttribute('markerHeight', '6');
-        loopMarker.setAttribute('orient', 'auto');
-        loopMarker.innerHTML = '<path d="M 0 0 L 10 5 L 0 10 z" fill="#dc3545"/>';
-        defs.appendChild(loopMarker);
-        
-        // Calculate the point positions
-        const pointPositions = {};
-        const pointElements = [];
-        
-        // Create points for each line
-        orderedLines.forEach((lineNumber, index) => {
-            const pointIndices = lineGroups[lineNumber];
-            const firstIndex = pointIndices[0];
-            const count = pointIndices.length;
-            
-            // Calculate position (evenly spaced)
-            const pointSpacing = timelineWidth / (orderedLines.length + 1);
-            const xPos = (index + 1) * pointSpacing;
-            
-            // Save position for drawing lines later - create a fresh object
-            pointPositions[lineNumber] = {
-                x: xPos,
-                index: index
-            };
-            
-            // Determine point type
-            let pointType = 'normal';
-            let markerStyle = '';
-            
-            if (index > 0) {
-                const prevLine = orderedLines[index - 1];
-                // Loop back (line number decreases)
-                if (lineNumber < prevLine) {
-                    pointType = 'loop-back';
-                    markerStyle = 'background-color: white; border: 2px solid #dc3545;';
-                }
-                // Jump forward (skips lines)
-                else if (lineNumber > prevLine + 1) {
-                    pointType = 'jump-forward';
-                    markerStyle = 'background-color: #fd7e14;';
-                }
+
+        const divergenceMarker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+        divergenceMarker.setAttribute('id', 'arrow-divergence');
+        divergenceMarker.setAttribute('viewBox', '0 0 10 10');
+        divergenceMarker.setAttribute('refX', '9');
+        divergenceMarker.setAttribute('refY', '5');
+        divergenceMarker.setAttribute('markerWidth', '6');
+        divergenceMarker.setAttribute('markerHeight', '6');
+        divergenceMarker.setAttribute('orient', 'auto');
+        divergenceMarker.innerHTML = '<path d="M 0 0 L 10 5 L 0 10 z" fill="#6f42c1"/>';
+        defs.appendChild(divergenceMarker);
+
+        versionIds.forEach((versionId, index) => {
+            const y = baseY + index * laneHeight;
+            const lane = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            lane.setAttribute('x1', leftPadding - 10);
+            lane.setAttribute('y1', y);
+            lane.setAttribute('x2', timelineWidth - rightPadding + 10);
+            lane.setAttribute('y2', y);
+            lane.setAttribute('stroke', '#e9ecef');
+            lane.setAttribute('stroke-width', '1');
+            svg.appendChild(lane);
+
+            const laneLabel = document.createElement('div');
+            laneLabel.className = 'timeline-version-label';
+            laneLabel.textContent = getCodeVersionLabel(versionId, versionMap);
+            laneLabel.style.position = 'absolute';
+            laneLabel.style.left = '0';
+            laneLabel.style.top = `${y - 10}px`;
+            laneLabel.style.color = versionColors[index % versionColors.length];
+            laneLabel.style.fontSize = '10px';
+            laneLabel.style.fontWeight = '600';
+            timelineWrapper.appendChild(laneLabel);
+        });
+
+        const pointElements = snapshots.map((snapshot, index) => {
+            const lineNumber = snapshot.line || snapshot.line_number;
+            const codeDefinitionId = getSnapshotCodeDefinitionId(snapshot);
+            const versionIndex = Math.max((versionMap[codeDefinitionId] || 1) - 1, 0);
+            const versionColor = versionColors[versionIndex % versionColors.length];
+            const xPos = leftPadding + index * pointSpacing;
+            const yPos = baseY + versionIndex * laneHeight;
+            const previousSnapshot = snapshots[index - 1];
+            const previousCodeDefinitionId = previousSnapshot ? getSnapshotCodeDefinitionId(previousSnapshot) : codeDefinitionId;
+            const isDivergence = index > 0 && codeDefinitionId !== previousCodeDefinitionId;
+            const previousLine = previousSnapshot ? (previousSnapshot.line || previousSnapshot.line_number) : lineNumber;
+            let pointType = isDivergence ? 'code-divergence' : 'normal';
+            if (!isDivergence && index > 0 && lineNumber < previousLine) {
+                pointType = 'loop-back';
+            } else if (!isDivergence && index > 0 && lineNumber > previousLine + 1) {
+                pointType = 'jump-forward';
             }
-            
-            // Normal point if no special style set
-            if (!markerStyle) {
-                markerStyle = 'background-color: #007bff;';
-            }
-            
-            // Create point container
+
             const point = document.createElement('div');
             point.className = `timeline-point ${pointType}`;
             point.setAttribute('data-line', lineNumber);
-            point.setAttribute('data-index', firstIndex);
+            point.setAttribute('data-index', index);
             point.setAttribute('data-point-type', pointType);
-            point.setAttribute('title', `Line ${lineNumber} (${count} snapshot${count > 1 ? 's' : ''})`);
+            point.setAttribute('data-version-color', versionColor);
+            point.setAttribute('data-code-definition-id', codeDefinitionId || '');
+            point.setAttribute(
+                'title',
+                `Snapshot ${index + 1}, line ${lineNumber}, ${getCodeVersionLabel(codeDefinitionId, versionMap)}${isDivergence ? ' - code version changed here' : ''}`
+            );
             point.style.position = 'absolute';
             point.style.left = `${xPos}px`;
+            point.style.top = `${yPos - 15}px`;
             point.style.transform = 'translateX(-50%)';
-            point.style.top = '0';
             point.style.textAlign = 'center';
             point.style.cursor = 'pointer';
-            point.style.width = '30px';
+            point.style.width = '42px';
             point.style.zIndex = '2';
-            
-            // Create marker
+
             const marker = document.createElement('div');
             marker.className = 'timeline-marker';
-            marker.style.width = '14px';
-            marker.style.height = '14px';
+            marker.style.width = isDivergence ? '18px' : '14px';
+            marker.style.height = isDivergence ? '18px' : '14px';
             marker.style.borderRadius = '50%';
             marker.style.margin = '0 auto';
-            marker.style.marginTop = '23px';
             marker.style.position = 'relative';
-            marker.style.backgroundColor = markerStyle.includes('background-color') ? 
-                markerStyle.match(/background-color: ([^;]+);/)[1] : '#007bff';
-            
-            if (markerStyle.includes('border')) {
-                marker.style.border = markerStyle.match(/border: ([^;]+);/)[1];
+            marker.style.backgroundColor = versionColor;
+            marker.style.border = isDivergence ? '3px solid #212529' : '2px solid white';
+            marker.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.2)';
+
+            if (isDivergence) {
+                marker.style.borderRadius = '4px';
+                marker.style.transform = 'rotate(45deg)';
             }
-            
-            // Add count badge if needed
-            if (count > 1) {
-                const badge = document.createElement('span');
-                badge.className = 'badge';
-                badge.textContent = count;
-                badge.style.position = 'absolute';
-                badge.style.top = '-6px';
-                badge.style.right = '-6px';
-                badge.style.backgroundColor = '#6c757d';
-                badge.style.color = 'white';
-                badge.style.fontSize = '9px';
-                badge.style.borderRadius = '50%';
-                badge.style.padding = '2px 4px';
-                badge.style.minWidth = '16px';
-                badge.style.textAlign = 'center';
-                marker.appendChild(badge);
+
+            if (pointType === 'loop-back') {
+                marker.style.backgroundColor = 'white';
+                marker.style.border = `2px solid ${versionColor}`;
+            } else if (pointType === 'jump-forward') {
+                marker.style.border = '2px solid #fd7e14';
             }
-            
-            // Add line number
+
             const lineLabel = document.createElement('div');
             lineLabel.className = 'timeline-line-number';
             lineLabel.textContent = lineNumber;
             lineLabel.style.fontSize = '10px';
-            lineLabel.style.marginTop = '6px';
-            
-            // Assemble point
+            lineLabel.style.marginTop = '4px';
+            lineLabel.style.whiteSpace = 'nowrap';
+
+            const versionLabel = document.createElement('div');
+            versionLabel.className = 'timeline-code-version';
+            versionLabel.textContent = getCodeVersionLabel(codeDefinitionId, versionMap);
+            versionLabel.style.fontSize = '9px';
+            versionLabel.style.color = versionColor;
+
             point.appendChild(marker);
             point.appendChild(lineLabel);
+            point.appendChild(versionLabel);
             timelineWrapper.appendChild(point);
-            
-            // Save reference for later - create a new object reference
-            pointElements.push({
+
+            point.addEventListener('click', function() {
+                const snapshotIndex = parseInt(this.getAttribute('data-index'));
+                displaySnapshot(snapshotIndex);
+                updateTimelineMarkers(snapshotIndex);
+            });
+
+            return {
                 element: point,
                 marker: marker,
                 line: lineNumber,
-                x: xPos
-            });
-            
-            // Add click handler
-            point.addEventListener('click', function() {
-                const lineNum = parseInt(this.getAttribute('data-line'));
-                const snapshotIndex = parseInt(this.getAttribute('data-index'));
-                selectLineByNumber(lineNum);
-                displaySnapshot(snapshotIndex);
-            });
+                x: xPos,
+                y: yPos,
+                codeDefinitionId,
+                pointType,
+                versionColor
+            };
         });
-        
-        // Draw regular connecting lines between points
+
         for (let i = 0; i < pointElements.length - 1; i++) {
             const current = pointElements[i];
             const next = pointElements[i + 1];
-            
-            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-            line.setAttribute('x1', current.x);
-            line.setAttribute('y1', '30');
-            // Ensure we don't try to modify next.x directly by creating a new value
-            const arrowEndX = next.x - 6;
-            line.setAttribute('x2', arrowEndX);
-            line.setAttribute('y2', '30');
-            line.setAttribute('stroke', '#6c757d');
-            line.setAttribute('stroke-width', '1.5');
-            line.setAttribute('marker-end', 'url(#arrow-normal)');
-            
-            svg.appendChild(line);
+            const changedVersion = current.codeDefinitionId !== next.codeDefinitionId;
+            const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            const startX = current.x + 9;
+            const endX = next.x - 9;
+            const midX = (startX + endX) / 2;
+            const pathData = changedVersion
+                ? `M ${startX} ${current.y} C ${midX} ${current.y}, ${midX} ${next.y}, ${endX} ${next.y}`
+                : `M ${startX} ${current.y} L ${endX} ${next.y}`;
+
+            path.setAttribute('d', pathData);
+            path.setAttribute('fill', 'none');
+            path.setAttribute('stroke', changedVersion ? '#6f42c1' : '#6c757d');
+            path.setAttribute('stroke-width', changedVersion ? '2.5' : '1.5');
+            path.setAttribute('stroke-dasharray', changedVersion ? '5,3' : '');
+            path.setAttribute('marker-end', changedVersion ? 'url(#arrow-divergence)' : 'url(#arrow-normal)');
+            svg.appendChild(path);
         }
-        
-        // Draw loop arcs
-        loopConnections.forEach(loop => {
-            const fromPoint = pointPositions[loop.from];
-            const toPoint = pointPositions[loop.to];
-            
-            if (fromPoint && toPoint) {
-                const startX = fromPoint.x;
-                const endX = toPoint.x;
-                
-                // Only draw if not adjacent points
-                if (Math.abs(fromPoint.index - toPoint.index) > 1) {
-                    // Calculate arc control points (for bezier curve)
-                    const midX = (startX + endX) / 2;
-                    const controlY = 10; // Higher curve for visibility
-                    
-                    // Create path element for the arc
-                    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-                    // Ensure we don't try to modify endX directly by creating a new value
-                    const arrowEndX = endX - 6;
-                    path.setAttribute('d', `M ${startX} 30 Q ${midX} ${controlY} ${arrowEndX} 30`);
-                    path.setAttribute('fill', 'none');
-                    path.setAttribute('stroke', '#dc3545');
-                    path.setAttribute('stroke-width', '2');
-                    path.setAttribute('stroke-dasharray', '3,3');
-                    path.setAttribute('marker-end', 'url(#arrow-loop)');
-                    path.style.zIndex = '3';
-                    
-                    // Append to SVG
-                    svg.appendChild(path);
-                    
-                    console.log(`Drew loop arc from line ${loop.from} to ${loop.to}`);
-                }
-            }
-        });
-        
-        // Highlight first point
-        if (pointElements.length > 0) {
-            const firstMarker = pointElements[0].marker;
-            // Use a new marker instead of modifying style directly
-            firstMarker.style.backgroundColor = '#dc3545';
+
+        if (versionIds.length > 1) {
+            const legend = document.createElement('div');
+            legend.className = 'timeline-version-legend';
+            legend.style.position = 'absolute';
+            legend.style.left = '8px';
+            legend.style.bottom = '2px';
+            legend.style.fontSize = '10px';
+            legend.style.color = '#6c757d';
+            legend.textContent = 'Code version changes are shown by angled dashed connectors';
+            timelineWrapper.appendChild(legend);
         }
-        
-        // Log loop connections for debugging
-        console.log('Loop connections:', loopConnections);
-        console.log('Point positions:', pointPositions);
+
+        updateTimelineMarkers(selectedSnapshotIndex || 0);
     }
     
     function displaySnapshot(index) {
@@ -567,6 +531,9 @@
         
         // Update global counter
         updateGlobalCounter(index);
+
+        // Switch the source panel to the code version that produced this snapshot.
+        updateCodeForSnapshot(snapshot);
         
         // Highlight the current line in the code - the snapshot.line is in the source file's line numbers
         highlightLine(lineNumber);
@@ -786,6 +753,15 @@
         if (matchingIndices.length === 0) {
             matchingIndices.push(closestIndex);
         }
+
+        if (currentCodeDefinitionId && matchingIndices.length > 1) {
+            const sameVersionIndex = matchingIndices.find(index =>
+                getSnapshotCodeDefinitionId(currentStackData.frames[index]) === currentCodeDefinitionId
+            );
+            if (sameVersionIndex !== undefined) {
+                matchingIndices = [sameVersionIndex];
+            }
+        }
         
         // Display the first matching snapshot
         displaySnapshot(matchingIndices[0]);
@@ -870,33 +846,48 @@
         
         const snapshot = currentStackData.frames[currentIndex];
         if (!snapshot) return;
-        
-        const lineNumber = snapshot.line || snapshot.line_number;
-        
+
         // Reset all timeline points to their original colors
         document.querySelectorAll('.timeline-point').forEach(point => {
             const marker = point.querySelector('.timeline-marker');
             const pointType = point.getAttribute('data-point-type');
+            const versionColor = point.getAttribute('data-version-color') || '#007bff';
             
             if (pointType === 'loop-back') {
                 marker.style.backgroundColor = 'white';
-                marker.style.border = '2px solid #dc3545';
+                marker.style.border = `2px solid ${versionColor}`;
             } else if (pointType === 'jump-forward') {
-                marker.style.backgroundColor = '#fd7e14';
+                marker.style.backgroundColor = versionColor;
+                marker.style.border = '2px solid #fd7e14';
+            } else if (pointType === 'code-divergence') {
+                marker.style.backgroundColor = versionColor;
+                marker.style.border = '3px solid #212529';
             } else {
-                marker.style.backgroundColor = '#007bff';
+                marker.style.backgroundColor = versionColor;
+                marker.style.border = '2px solid white';
             }
+            marker.style.boxShadow = '0 0 0 1px rgba(0,0,0,0.2)';
         });
         
-        // Highlight the point for the current line
-        document.querySelectorAll(`.timeline-point[data-line="${lineNumber}"]`).forEach(point => {
+        // Highlight the exact snapshot point.
+        const point = document.querySelector(`.timeline-point[data-index="${currentIndex}"]`);
+        if (point) {
             const marker = point.querySelector('.timeline-marker');
             marker.style.backgroundColor = '#dc3545';
-            
-            if (point.getAttribute('data-point-type') === 'loop-back') {
-                marker.style.border = '2px solid #dc3545';
+            marker.style.border = '3px solid #212529';
+            marker.style.boxShadow = '0 0 0 4px rgba(220, 53, 69, 0.18)';
+
+            const timelineContainer = document.getElementById('timeline-container');
+            const pointLeft = point.offsetLeft;
+            const visibleLeft = timelineContainer.scrollLeft;
+            const visibleRight = visibleLeft + timelineContainer.clientWidth;
+            if (pointLeft < visibleLeft || pointLeft > visibleRight - 48) {
+                timelineContainer.scrollTo({
+                    left: Math.max(pointLeft - timelineContainer.clientWidth / 2, 0),
+                    behavior: 'smooth'
+                });
             }
-        });
+        }
     }
 
     function stopPlayback() {
