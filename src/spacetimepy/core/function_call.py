@@ -5,7 +5,7 @@ from typing import Any
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from .models import CodeDefinition, FunctionCall, StackSnapshot
+from .models import CodeDefinition, FunctionCall, StackSnapshot, StackSnapshotEdge
 from .representation import ObjectManager, PickleConfig
 
 logger = logging.getLogger(__name__)
@@ -204,8 +204,8 @@ class FunctionCallRepository:
                     trace_data["code"] = code
 
                 # Add code definition ID if available
-                if function_call.code_definition_id is not None:
-                    trace_data["code_definition_id"] = str(function_call.code_definition_id)
+                if snapshot.effective_code_definition_id is not None:
+                    trace_data["code_definition_id"] = str(snapshot.effective_code_definition_id)
 
                 traces.append(trace_data)
 
@@ -268,9 +268,25 @@ class FunctionCallRepository:
                 logger.error(f"Function call {call_id} not found")
                 return False
 
+            # Delete graph edges before snapshots to avoid self-referential FK issues.
+            snapshot_ids = [
+                snapshot_id
+                for snapshot_id, in self.session.query(StackSnapshot.id).filter(
+                    StackSnapshot.function_call_id == id_int
+                ).all()
+            ]
+            if snapshot_ids:
+                self.session.query(StackSnapshotEdge).filter(
+                    StackSnapshotEdge.from_snapshot_id.in_(snapshot_ids)
+                ).delete(synchronize_session=False)
+                self.session.query(StackSnapshotEdge).filter(
+                    StackSnapshotEdge.to_snapshot_id.in_(snapshot_ids)
+                ).delete(synchronize_session=False)
+
             # Delete all stack snapshots associated with this function call
             snapshots = self.session.query(StackSnapshot).filter(StackSnapshot.function_call_id == id_int).all()
             for snapshot in snapshots:
+                snapshot.next_snapshot_id = None
                 self.session.delete(snapshot)
 
             # Delete the function call itself

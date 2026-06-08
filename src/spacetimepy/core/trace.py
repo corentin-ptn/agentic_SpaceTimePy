@@ -116,6 +116,7 @@ class TraceExporter:
                     # Create the snapshot entry
                     snapshot_data = {
                         'snapshot_id': snapshot.id,
+                        'code_definition_id': snapshot.effective_code_definition_id,
                         'line_number': snapshot.line_number,
                         'timestamp': snapshot.timestamp.isoformat() if snapshot.timestamp else None,
                         'order_in_call': snapshot.order_in_call,
@@ -132,6 +133,7 @@ class TraceExporter:
                     # Add a placeholder entry to maintain sequence
                     trace_snapshots.append({
                         'snapshot_id': snapshot.id,
+                        'code_definition_id': snapshot.effective_code_definition_id,
                         'line_number': snapshot.line_number,
                         'timestamp': snapshot.timestamp.isoformat() if snapshot.timestamp else None,
                         'order_in_call': snapshot.order_in_call,

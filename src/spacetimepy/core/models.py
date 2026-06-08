@@ -85,11 +85,15 @@ class StackSnapshot(Base):
     Each snapshot represents the state of local and global variables
     at a specific line during function execution. Snapshots form a
     chronological sequence within a function call.
+
+    The code definition is stored directly on the snapshot because a single
+    function call may contain states produced from multiple code versions.
     """
     __tablename__ = 'stack_snapshots'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     function_call_id: Mapped[int] = mapped_column(Integer, ForeignKey('function_calls.id'), nullable=False)
+    code_definition_id: Mapped[str | None] = mapped_column(String, ForeignKey('code_definitions.id'), nullable=True)
     line_number: Mapped[int] = mapped_column(Integer, nullable=False)
     timestamp: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.now)
     locals_refs: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)  # Dict[str, str] mapping variable names to object refs
@@ -100,11 +104,24 @@ class StackSnapshot(Base):
 
     # Relationships
     function_call = relationship("FunctionCall", back_populates="stack_snapshots")
+    code_definition = relationship("CodeDefinition", back_populates="stack_snapshots")
     next_snapshot_id: Mapped[int | None] = mapped_column(Integer, ForeignKey('stack_snapshots.id'), nullable=True)
     next_snapshot = relationship("StackSnapshot", foreign_keys=[next_snapshot_id], remote_side=[id], uselist=False)
+    incoming_edges = relationship(
+        "StackSnapshotEdge",
+        foreign_keys="StackSnapshotEdge.to_snapshot_id",
+        back_populates="to_snapshot",
+        cascade="all, delete",
+    )
+    outgoing_edges = relationship(
+        "StackSnapshotEdge",
+        foreign_keys="StackSnapshotEdge.from_snapshot_id",
+        back_populates="from_snapshot",
+        cascade="all, delete",
+    )
 
     def get_previous_snapshot(self, session):
-        """Get the previous snapshot in the execution sequence.
+        """Get the previous snapshot in the trace graph or execution sequence.
 
         Args:
             session: SQLAlchemy session to use for query
@@ -112,10 +129,58 @@ class StackSnapshot(Base):
         Returns:
             The previous StackSnapshot or None if this is the first snapshot
         """
+        edge = session.query(StackSnapshotEdge).filter(
+            StackSnapshotEdge.to_snapshot_id == self.id
+        ).order_by(desc(StackSnapshotEdge.created_at)).first()
+        if edge:
+            return edge.from_snapshot
+
         return session.query(StackSnapshot).filter(
             StackSnapshot.function_call_id == self.function_call_id,
             StackSnapshot.order_in_call < self.order_in_call
         ).order_by(desc(StackSnapshot.order_in_call)).first()
+
+    def get_successors(self, session, edge_type: str | None = None):
+        """Get snapshots directly derived from this snapshot."""
+        query = session.query(StackSnapshotEdge).filter(
+            StackSnapshotEdge.from_snapshot_id == self.id
+        )
+        if edge_type is not None:
+            query = query.filter(StackSnapshotEdge.edge_type == edge_type)
+        return [edge.to_snapshot for edge in query.order_by(StackSnapshotEdge.created_at).all()]
+
+    def get_predecessors(self, session, edge_type: str | None = None):
+        """Get snapshots that directly precede this snapshot."""
+        query = session.query(StackSnapshotEdge).filter(
+            StackSnapshotEdge.to_snapshot_id == self.id
+        )
+        if edge_type is not None:
+            query = query.filter(StackSnapshotEdge.edge_type == edge_type)
+        return [edge.from_snapshot for edge in query.order_by(StackSnapshotEdge.created_at).all()]
+
+    def get_ancestry(self, session):
+        """Follow the primary predecessor chain back to the root snapshot."""
+        ancestry = []
+        current = self
+        seen_ids = {self.id}
+        while True:
+            previous = current.get_previous_snapshot(session)
+            if previous is None or previous.id in seen_ids:
+                break
+            ancestry.append(previous)
+            seen_ids.add(previous.id)
+            current = previous
+        return ancestry
+
+    @property
+    def effective_code_definition(self):
+        """Return the snapshot code definition, falling back to the call default."""
+        return self.code_definition or self.function_call.code_definition
+
+    @property
+    def effective_code_definition_id(self):
+        """Return the code definition ID that applies to this snapshot."""
+        return self.code_definition_id or self.function_call.code_definition_id
 
     @property
     def is_first_in_call(self):
@@ -125,7 +190,38 @@ class StackSnapshot(Base):
     @property
     def is_last_in_call(self):
         """Return True if this is the last snapshot in its function call"""
-        return self.next_snapshot_id is None
+        return not self.outgoing_edges and self.next_snapshot_id is None
+
+class StackSnapshotEdge(Base):
+    """Directed relationship between two stack snapshots.
+
+    Edges represent normal execution flow and branch/replay transitions across
+    code versions.
+    """
+    __tablename__ = 'stack_snapshot_edges'
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    from_snapshot_id: Mapped[int] = mapped_column(Integer, ForeignKey('stack_snapshots.id'), nullable=False)
+    to_snapshot_id: Mapped[int] = mapped_column(Integer, ForeignKey('stack_snapshots.id'), nullable=False)
+    edge_type: Mapped[str] = mapped_column(String, nullable=False, default='execution')
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, default=datetime.datetime.now)
+
+    from_snapshot = relationship(
+        "StackSnapshot",
+        foreign_keys=[from_snapshot_id],
+        back_populates="outgoing_edges",
+    )
+    to_snapshot = relationship(
+        "StackSnapshot",
+        foreign_keys=[to_snapshot_id],
+        back_populates="incoming_edges",
+    )
+
+    __table_args__ = (
+        Index('idx_stack_snapshot_edge_from', 'from_snapshot_id'),
+        Index('idx_stack_snapshot_edge_to', 'to_snapshot_id'),
+        Index('idx_stack_snapshot_edge_type', 'edge_type'),
+    )
 
 class FunctionCall(Base):
     """Model for storing function call information"""
@@ -144,7 +240,8 @@ class FunctionCall(Base):
     globals_refs: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)  # Dict[str, str] mapping variable names to object refs
     return_ref: Mapped[str | None] = mapped_column(String, nullable=True)  # Reference to return value in object manager
 
-    # Code version tracking
+    # Default code version at function entry. Individual stack snapshots may
+    # override this when traces branch across multiple code versions.
     code_definition_id: Mapped[str | None] = mapped_column(String, ForeignKey('code_definitions.id'), nullable=True)
 
     # Session relationship
@@ -261,6 +358,7 @@ class CodeDefinition(Base):
 
     # Direct relationships
     function_calls = relationship("FunctionCall", back_populates="code_definition")
+    stack_snapshots = relationship("StackSnapshot", back_populates="code_definition")
     objects = relationship("StoredObject", secondary="code_object_links", back_populates="code_definitions")
 
 class CodeObjectLink(Base):

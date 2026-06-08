@@ -14,6 +14,7 @@ from .core import (
     PyMonitoring,  # Backward compatibility alias
     SpaceTimeMonitor,
     StackSnapshot,
+    StackSnapshotEdge,
     StoredObject,
     disable_recording,
     enable_recording,
@@ -85,6 +86,7 @@ __all__ = [
     'StoredObject',
     'ObjectIdentity',
     'StackSnapshot',
+    'StackSnapshotEdge',
     'FunctionCall',
     'CodeDefinition',
     'CodeObjectLink',
@@ -117,5 +119,4 @@ __all__ = [
     # 'WebExplorer',  # Use: from spacetimepy.interface import WebExplorer
     # 'start_web_explorer',  # Use: from spacetimepy.interface import start_web_explorer
 ]
-
 

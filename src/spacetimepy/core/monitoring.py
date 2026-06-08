@@ -13,7 +13,7 @@ import types
 from typing import Any
 
 from .function_call import FunctionCallRepository
-from .models import FunctionCall, MonitoringSession, StackSnapshot, export_db, init_db
+from .models import FunctionCall, MonitoringSession, StackSnapshot, StackSnapshotEdge, export_db, init_db
 from .representation import ObjectManager, PickleConfig
 
 # Configure logging - only show warnings and errors
@@ -443,7 +443,17 @@ class SpaceTimeMonitor:
 
         return code_def_id
 
-    def create_stack_snapshot(self, call_id: int, line_number: int, locals_dict: dict[str, str], globals_dict: dict[str, str], order_in_call: int | None = None) -> StackSnapshot | None:
+    def create_stack_snapshot(
+        self,
+        call_id: int,
+        line_number: int,
+        locals_dict: dict[str, str],
+        globals_dict: dict[str, str],
+        order_in_call: int | None = None,
+        code_definition_id: str | None = None,
+        previous_snapshot_id: int | None = None,
+        edge_type: str = "execution",
+    ) -> StackSnapshot | None:
         """
         Create a stack snapshot for a function call.
 
@@ -453,6 +463,9 @@ class SpaceTimeMonitor:
             locals_dict: Dictionary of local variable references
             globals_dict: Dictionary of global variable references
             order_in_call: Position in the execution sequence (optional)
+            code_definition_id: Exact code definition for this state. Defaults to the call code.
+            previous_snapshot_id: Snapshot this state was derived from, if not the previous order.
+            edge_type: Trace graph edge type connecting the previous snapshot.
 
         Returns:
             The created StackSnapshot object or None if creation fails
@@ -467,9 +480,17 @@ class SpaceTimeMonitor:
                 logger.error(f"Function call {call_id} not found during stack snapshot creation")
                 return None
 
+            if code_definition_id is None:
+                code_definition_id = call.code_definition_id
+
             # Find the previous snapshot if any
             prev_snapshot = None
-            if order_in_call is not None and order_in_call > 0:
+            if previous_snapshot_id is not None:
+                prev_snapshot = self.session.get(StackSnapshot, previous_snapshot_id)
+                if prev_snapshot is None:
+                    logger.error(f"Previous stack snapshot {previous_snapshot_id} not found")
+                    return None
+            elif order_in_call is not None and order_in_call > 0:
                 prev_snapshot = self.session.query(StackSnapshot).filter(
                     StackSnapshot.function_call_id == call_id,
                     StackSnapshot.order_in_call == order_in_call - 1
@@ -478,23 +499,30 @@ class SpaceTimeMonitor:
             # Create the new snapshot
             snapshot = StackSnapshot(
                 function_call_id=call_id,
+                code_definition_id=code_definition_id,
                 line_number=line_number,
                 locals_refs=locals_dict,
                 globals_refs=globals_dict,
                 order_in_call=order_in_call
             )
 
-            # Set bidirectional link if previous snapshot exists
-            if prev_snapshot:
-                prev_snapshot.next_snapshot_id = snapshot.id
-
             self.session.add(snapshot)
+            self.session.flush()  # Flush to get the ID
+
+            # Record graph edge and maintain the legacy linear next pointer.
+            if prev_snapshot:
+                edge = StackSnapshotEdge(
+                    from_snapshot_id=prev_snapshot.id,
+                    to_snapshot_id=snapshot.id,
+                    edge_type=edge_type,
+                )
+                self.session.add(edge)
+                if edge_type == "execution" and prev_snapshot.next_snapshot_id is None:
+                    prev_snapshot.next_snapshot_id = snapshot.id
 
             # If this is the first snapshot for this call, update the call record
             if order_in_call == 0 or not call.first_snapshot_id:
                 call.first_snapshot_id = snapshot.id
-
-            self.session.flush()  # Flush to get the ID
 
             return snapshot
         except Exception as e:
@@ -1220,4 +1248,3 @@ def _cleanup_monitoring():
         SpaceTimeMonitor._instance.shutdown()
 
 atexit.register(_cleanup_monitoring)
-

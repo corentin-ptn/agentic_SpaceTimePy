@@ -333,6 +333,9 @@ async def get_stack_recording(function_id: str):
                 if stack_snapshot.next_snapshot_id:
                     frame_info["next_snapshot_id"] = str(stack_snapshot.next_snapshot_id)
 
+                if stack_snapshot.effective_code_definition_id is not None:
+                    frame_info["code_definition_id"] = str(stack_snapshot.effective_code_definition_id)
+
                 # Add code information if available
                 if code:
                     frame_info["code"] = code
@@ -439,7 +442,8 @@ async def get_snapshot(snapshot_id: str):
             "locals": locals_data,
             "globals": globals_data,
             "previous_snapshot_id": previous_snapshot.id if previous_snapshot else None,
-            "next_snapshot_id": snapshot.next_snapshot_id
+            "next_snapshot_id": snapshot.next_snapshot_id,
+            "code_definition_id": snapshot.effective_code_definition_id
         }
     except ValueError as e:
         raise HTTPException(status_code=404 if "not found" in str(e) else 500, detail=str(e))
