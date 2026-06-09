@@ -59,8 +59,9 @@ def generate_line_mapping(code_path_1:str, code_path_2:str) -> tuple[dict, dict,
             m1,m2 = tuple(map(int, next(matches).group(0)[1:-1].split(',')))
             m1_line = get_line_number_from_index(foo1_code, m1)
             m2_line = get_line_number_from_index(foo2_code, m2)
-            if m1_line == m2_line:
-                modified_lines.append(m1_line)
+            mapping_v1_to_v2[m1_line] = m2_line
+            mapping_v2_to_v1[m2_line] = m1_line
+            modified_lines.append(m1_line)
 
         elif section.startswith('match'):
             data = section.split("---")[1].strip()

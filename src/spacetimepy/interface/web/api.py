@@ -412,6 +412,281 @@ async def get_stack_recording(function_id: str):
         logger.error(f"Error getting stack recording: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+def _code_definition_to_dict(code_definition, fallback_first_line: int | None = None) -> dict[str, Any]:
+    first_line_no = code_definition.first_line_no
+    if first_line_no is None:
+        first_line_no = fallback_first_line
+
+    return {
+        "id": str(code_definition.id),
+        "content": code_definition.code_content,
+        "module_path": code_definition.module_path,
+        "type": code_definition.type,
+        "name": code_definition.name,
+        "first_line_no": first_line_no,
+    }
+
+def _build_trace_parts_alignment(parts: list[dict[str, Any]]) -> dict[str, Any]:
+    parents: dict[tuple[str, int], tuple[str, int]] = {}
+
+    def find(item: tuple[str, int]) -> tuple[str, int]:
+        parents.setdefault(item, item)
+        if parents[item] != item:
+            parents[item] = find(parents[item])
+        return parents[item]
+
+    def union(left: tuple[str, int], right: tuple[str, int]) -> None:
+        left_root = find(left)
+        right_root = find(right)
+        if left_root != right_root:
+            parents[right_root] = left_root
+
+    lines_by_part: dict[str, dict[int, list[dict[str, Any]]]] = {}
+    part_by_id = {part["part_id"]: part for part in parts}
+    mapping_metadata = []
+
+    for part in parts:
+        part_lines: dict[int, list[dict[str, Any]]] = {}
+        for frame in part["frames"]:
+            relative_line = frame.get("relative_line")
+            if relative_line is None:
+                continue
+            part_lines.setdefault(int(relative_line), []).append(frame)
+            parents.setdefault((part["part_id"], int(relative_line)), (part["part_id"], int(relative_line)))
+        lines_by_part[part["part_id"]] = part_lines
+
+    for left_index, left_part in enumerate(parts):
+        for right_part in parts[left_index + 1:]:
+            left_lines = lines_by_part[left_part["part_id"]]
+            right_lines = lines_by_part[right_part["part_id"]]
+            if not left_lines or not right_lines:
+                continue
+
+            pair_metadata: dict[str, Any] = {
+                "from_part_id": left_part["part_id"],
+                "to_part_id": right_part["part_id"],
+                "from_code_definition_id": left_part["code_definition_id"],
+                "to_code_definition_id": right_part["code_definition_id"],
+                "v1_to_v2": {},
+                "v2_to_v1": {},
+                "modified_lines": [],
+            }
+
+            if left_part["code_definition_id"] == right_part["code_definition_id"]:
+                mapping_v1_to_v2 = {line: line for line in left_lines}
+                mapping_v2_to_v1 = {line: line for line in right_lines}
+                modified_lines = []
+                pair_metadata["strategy"] = "same_code_definition"
+            else:
+                left_code = left_part.get("code") or {}
+                right_code = right_part.get("code") or {}
+                left_content = left_code.get("content") or ""
+                right_content = right_code.get("content") or ""
+                pair_metadata["strategy"] = "gumtree_line_mapping"
+                try:
+                    mapping_v1_to_v2, mapping_v2_to_v1, modified_lines = generate_line_mapping_from_string(
+                        left_content,
+                        right_content,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error generating line mapping for parts %s and %s: %s",
+                        left_part["part_id"],
+                        right_part["part_id"],
+                        e,
+                    )
+                    mapping_v1_to_v2, mapping_v2_to_v1, modified_lines = {}, {}, []
+                    pair_metadata["error"] = str(e)
+
+            for left_line, right_line in mapping_v1_to_v2.items():
+                if right_line is None:
+                    continue
+                if left_line in left_lines and right_line in right_lines:
+                    union((left_part["part_id"], int(left_line)), (right_part["part_id"], int(right_line)))
+
+            pair_metadata["v1_to_v2"] = {str(key): value for key, value in mapping_v1_to_v2.items()}
+            pair_metadata["v2_to_v1"] = {str(key): value for key, value in mapping_v2_to_v1.items()}
+            pair_metadata["modified_lines"] = modified_lines
+            mapping_metadata.append(pair_metadata)
+
+    grouped_lines: dict[tuple[str, int], list[tuple[str, int]]] = {}
+    for item in parents:
+        grouped_lines.setdefault(find(item), []).append(item)
+
+    groups = []
+    for items in grouped_lines.values():
+        members = []
+        for part_id, line in sorted(items, key=lambda item: (part_by_id[item[0]]["index"], item[1])):
+            part = part_by_id[part_id]
+            frames = lines_by_part[part_id].get(line, [])
+            if not frames:
+                continue
+
+            members.append({
+                "part_id": part_id,
+                "part_index": part["index"],
+                "code_definition_id": part["code_definition_id"],
+                "line": line,
+                "frame_ids": [frame["frame_id"] for frame in frames],
+                "snapshot_ids": [frame["snapshot_id"] for frame in frames],
+                "orders": [frame["order_in_call"] for frame in frames],
+                "state_count": len(frames),
+            })
+
+        if not members:
+            continue
+
+        groups.append({
+            "alignment_id": f"align:{len(groups)}",
+            "kind": "matched" if len(members) > 1 else "unmatched",
+            "confidence": 1.0 if len(members) > 1 else 0.0,
+            "members": members,
+        })
+
+    return {
+        "mode": "line_mapping",
+        "status": "ok",
+        "groups": groups,
+        "mappings": mapping_metadata,
+    }
+
+async def get_trace_parts_data(call_id: str, include_alignment: bool = False) -> dict[str, Any]:
+    """Build a function call trace split into contiguous code-version parts."""
+    global session
+
+    if session is None:
+        raise ValueError("Session is not initialized")
+
+    function_call = session.query(FunctionCall).filter(FunctionCall.id == call_id).first()
+    if not function_call:
+        raise ValueError(f"Function call {call_id} not found")
+
+    snapshots = session.query(StackSnapshot).filter(
+        StackSnapshot.function_call_id == call_id
+    ).order_by(StackSnapshot.order_in_call.asc()).all()
+
+    code_definition_ids = {
+        snapshot.effective_code_definition_id
+        for snapshot in snapshots
+        if snapshot.effective_code_definition_id is not None
+    }
+    if function_call.code_definition_id is not None:
+        code_definition_ids.add(function_call.code_definition_id)
+
+    code_definitions = {}
+    if code_definition_ids:
+        definitions = session.query(CodeDefinition).filter(
+            CodeDefinition.id.in_(code_definition_ids)
+        ).all()
+        for definition in definitions:
+            code_definitions[str(definition.id)] = _code_definition_to_dict(
+                definition,
+                function_call.line,
+            )
+
+    function_code_definition_id = (
+        str(function_call.code_definition_id)
+        if function_call.code_definition_id is not None
+        else None
+    )
+    function_info = {
+        "id": str(function_call.id),
+        "name": function_call.function,
+        "file": function_call.file,
+        "line": function_call.line,
+        "time": function_call.start_time.isoformat() if function_call.start_time else None,
+        "end_time": function_call.end_time.isoformat() if function_call.end_time else None,
+        "code_definition_id": function_code_definition_id,
+        "call_metadata": function_call.call_metadata,
+    }
+    if function_code_definition_id in code_definitions:
+        function_info["code"] = code_definitions[function_code_definition_id]
+
+    parts = []
+    current_part = None
+
+    for snapshot in snapshots:
+        code_definition_id = (
+            str(snapshot.effective_code_definition_id)
+            if snapshot.effective_code_definition_id is not None
+            else None
+        )
+
+        if current_part is None or current_part["code_definition_id"] != code_definition_id:
+            part_index = len(parts)
+            current_part = {
+                "part_id": f"{function_call.id}:part:{part_index}",
+                "index": part_index,
+                "code_definition_id": code_definition_id,
+                "code": code_definitions.get(code_definition_id),
+                "start_order": snapshot.order_in_call,
+                "end_order": snapshot.order_in_call,
+                "start_snapshot_id": str(snapshot.id),
+                "end_snapshot_id": str(snapshot.id),
+                "frame_count": 0,
+                "frames": [],
+            }
+            parts.append(current_part)
+
+        first_line_no = None
+        code_info = current_part.get("code")
+        if isinstance(code_info, dict):
+            first_line_no = code_info.get("first_line_no")
+
+        relative_line = None
+        if first_line_no is not None and snapshot.line_number is not None:
+            relative_line = snapshot.line_number - int(first_line_no) + 1
+            if relative_line < 1:
+                relative_line = 1
+
+        frame_info = {
+            "frame_id": f"snapshot:{snapshot.id}",
+            "snapshot_id": str(snapshot.id),
+            "line": snapshot.line_number,
+            "relative_line": relative_line,
+            "timestamp": snapshot.timestamp.isoformat() if snapshot.timestamp else None,
+            "order_in_call": snapshot.order_in_call,
+            "code_definition_id": code_definition_id,
+            "locals_refs": snapshot.locals_refs,
+            "globals_refs": snapshot.globals_refs,
+            "is_first_in_call": snapshot.is_first_in_call,
+            "is_last_in_call": snapshot.is_last_in_call,
+        }
+
+        previous_snapshot = snapshot.get_previous_snapshot(session)
+        if previous_snapshot:
+            frame_info["previous_snapshot_id"] = str(previous_snapshot.id)
+        if snapshot.next_snapshot_id:
+            frame_info["next_snapshot_id"] = str(snapshot.next_snapshot_id)
+
+        if snapshot.locals_refs:
+            frame_info["locals"] = {
+                name: serialize_stored_value(value)
+                for name, value in snapshot.locals_refs.items()
+            }
+
+        if snapshot.globals_refs:
+            frame_info["globals"] = {
+                name: serialize_stored_value(value)
+                for name, value in snapshot.globals_refs.items()
+                if not name.startswith("__") and not name.endswith("__")
+            }
+
+        current_part["frames"].append(frame_info)
+        current_part["end_order"] = snapshot.order_in_call
+        current_part["end_snapshot_id"] = str(snapshot.id)
+        current_part["frame_count"] = len(current_part["frames"])
+
+    result = {
+        "function": function_info,
+        "parts": parts,
+        "code_definitions": code_definitions,
+    }
+    if include_alignment:
+        result["alignment"] = _build_trace_parts_alignment(parts)
+
+    return result
+
 @app.get("/api/snapshot/{snapshot_id}")
 async def get_snapshot(snapshot_id: str):
     """Get details of a specific stack snapshot"""
@@ -1097,6 +1372,20 @@ async def get_execution_tree(call_id: str, max_depth: int = Query(5, description
         raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
     except Exception as e:
         logger.error(f"Error getting execution tree: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/function-call/{call_id}/trace-parts")
+async def get_trace_parts(
+    call_id: str,
+    include_alignment: bool = Query(False, description="Include alignment metadata placeholder"),
+):
+    """Get a function call trace split into contiguous code-version parts."""
+    try:
+        return await get_trace_parts_data(call_id, include_alignment=include_alignment)
+    except ValueError as e:
+        raise HTTPException(status_code=404 if "not found" in str(e) else 400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting trace parts: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/function-call/{call_id}/graph")
