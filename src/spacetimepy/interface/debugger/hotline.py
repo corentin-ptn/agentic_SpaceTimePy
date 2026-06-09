@@ -51,7 +51,7 @@ def hotline(f_to_patch):
         # get the line to jump
         if line_number is not None:
             f_to_patch._ahs_deroute = line_number
-            f_to_patch._skip_one_line_snapshot = False
+            f_to_patch._skip_one_line_snapshot = True
         else:
             f_to_patch._ahs_deroute = f_to_patch._ahs_get_line_to_jump(_ahs_line)
             f_to_patch._skip_one_line_snapshot = True
@@ -78,7 +78,8 @@ def hotline(f_to_patch):
         old_to_new,_,changed = generate_line_mapping_from_string(old_source_code, new_source_code)
         first_line = f_to_patch.__code__.co_firstlineno
 
-        return old_to_new[before_line-first_line+1]+first_line-1
+        relative_line = before_line-first_line+1
+        return old_to_new.get(relative_line, relative_line)+first_line-1
 
 
     def _ahs_correct_jump():
@@ -133,7 +134,7 @@ def hotline(f_to_patch):
                             spt = inspect.getmodule(_ahs_frame.frame).spacetimepy.SpaceTimeMonitor.get_instance()
                             spt.skip_one_line_snapshot.add(_ahs_function.__name__)
                         except Exception as e:
-                            print("failed skip on trampoline skip in spacetimepy because no spacetimepy found", e)
+                            print("failed skip on trampoline skip in spacetimepy because no spacetimepy found, if needed import it in the current file", e)
                 sys.monitoring.set_local_events(sys.monitoring.PROFILER_ID,_ahs_function.__code__,event_before)
             # From the reload version, patch bytecode for correct jump and locals
             for n in ["__pydevd_ret_val_dict"]:

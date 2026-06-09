@@ -996,8 +996,10 @@ class SpaceTimeMonitor:
             if not self.call_stack:
                 return
             current_call = self.call_stack[-1]
+            logger.info(f"Current Skip one line snapshot flags: {self.skip_one_line_snapshot} with current name {code.co_name}")
             if code.co_name in self.skip_one_line_snapshot:
                 self.skip_one_line_snapshot.remove(code.co_name)
+                logger.info(f"Skipping stack snapshot for line {line_number} in function {code.co_name} due to skip flag")
                 return
 
             code_def_id = self._get_code_definition_for_frame(frame, code)

@@ -1,9 +1,10 @@
-import os
 import re
 import subprocess
 import tempfile
 
 import networkx as nx
+
+from .gumtree_utils import ensure_gumtree_available
 
 
 def get_line_number_from_index(text:str, index:int) -> int:
@@ -26,11 +27,13 @@ def generate_line_mapping_from_string(code_1:str, code_2:str) -> tuple[dict, dic
         return generate_line_mapping(f1.name, f2.name)
 
 def generate_line_mapping(code_path_1:str, code_path_2:str) -> tuple[dict, dict, list]:
-    gumtree_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "gumtree","bin","gumtree"))
+    gumtree_path = ensure_gumtree_available()
     diff_proc = subprocess.run(
         [gumtree_path, "textdiff", code_path_1, code_path_2],
         capture_output=True, text=True
     )
+    if diff_proc.returncode != 0:
+        raise RuntimeError(f"GumTree textdiff failed: {diff_proc.stderr.strip()}")
     diff = diff_proc.stdout
 
     with open(code_path_1) as f1:
@@ -70,9 +73,10 @@ def generate_line_mapping(code_path_1:str, code_path_2:str) -> tuple[dict, dict,
             matches = re.finditer(regex, data, re.MULTILINE)
             m1, m2 = tuple(map(int, next(matches).groups()))
             m1_line = get_line_number_from_index(foo1_code, m1)
-            m2_line = get_line_number_from_index(foo1_code, m2)
-            if m1_line == m2_line:
-                modified_lines.append(m1_line)
+            m2_line = get_line_number_from_index(foo2_code, m2)
+            mapping_v1_to_v2[m1_line] = m2_line
+            mapping_v2_to_v1[m2_line] = m1_line
+            modified_lines.append(m1_line)
 
         elif section.startswith('match'):
             data = section.split("---")[1].strip()
@@ -252,4 +256,3 @@ def export_edit_graph(edit_graph :nx.DiGraph) -> dict:
         "nodes": edit_graph.nodes(data=True),
         "edges": edit_graph.edges(data=True),
     }
-

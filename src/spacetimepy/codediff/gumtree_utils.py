@@ -28,20 +28,20 @@ def get_gumtree_path() -> str | None:
         executable_name = "gumtree"
 
     gumtree_executable = gumtree_dir / "bin" / executable_name
+    gumtree_jar = gumtree_dir / "lib" / "gumtree.jar"
 
     # Check if GumTree is already installed
-    if gumtree_executable.exists():
+    if gumtree_executable.exists() and gumtree_jar.exists():
         return str(gumtree_executable)
 
     # Try to download GumTree
     print("PyMonitor: GumTree not found, attempting to download...")
 
     if _download_gumtree():
-        if gumtree_executable.exists():
+        if gumtree_executable.exists() and gumtree_jar.exists():
             return str(gumtree_executable)
 
-    print("PyMonitor: Failed to download GumTree. Code diff functionality will not be available.")
-    return None
+    raise RuntimeError("PyMonitor: Failed to download GumTree. Code diff functionality will not be available.")
 
 
 def _download_gumtree() -> bool:
