@@ -125,10 +125,9 @@ class ExplorerApiService:
         """Compare call data between two sessions."""
         current_call_data = self.get_call_data(session_id, call_index)
 
-        comparison_call_data = self.game_explorer.get_comparison_call_data(
-            current_session_id=session_id,
-            current_call_index=call_index,
-            comparison_session_id=comparison_session_id,
+        comparison_call_data = self.get_call_data(
+            comparison_session_id,
+            call_index,
         )
 
         if not comparison_call_data:
@@ -178,7 +177,9 @@ class ExplorerApiService:
 
         # TODO: c'est très long !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
         for session in sessions:
-            session_details = self.get_session_details(str(session.session_id))
+            session_details = self.game_explorer.get_session_details(
+                session.session_id, True
+            )
             for call in session_details.calls:
                 # Appliquer les filtres
                 if search:
@@ -192,25 +193,7 @@ class ExplorerApiService:
                     continue
                 if function and function.lower() not in call.function.lower():
                     continue
-                function_calls.append(
-                    FunctionCallModel(
-                        id=call.call_id,
-                        function=call.function,
-                        file=call.file,
-                        line=call.line,
-                        start_time=call.timestamp,
-                        end_time=None,  # TODO !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-                        call_metadata={},
-                        locals_refs={},
-                        globals_refs={},
-                        session_id=call.session_id,
-                        parent_call_id=None,
-                        order_in_parent=0,
-                        order_in_session=call.call_index,
-                        first_snapshot_id=None,
-                        code_definition_id=call.code_definition_id,
-                    )
-                )
+                function_calls.append(call)
         return function_calls
 
     # ********************************

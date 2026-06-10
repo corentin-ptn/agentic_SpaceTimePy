@@ -13,7 +13,6 @@ from spacetimepy.interface.globalapi.api.models import (
     FunctionCallModel,
     MonitoringSessionModel,
     ReplayResult,
-    SessionData,
     SessionRelationship,
     StroboscopicFrame,
     VariablesData,
@@ -158,10 +157,8 @@ class SessionRepository(BaseRepository):
                 return MonitoringSessionModel(**session_dict)
             return None
 
-    def list_sessions(
-        self, tracked_function: str = "display_game"
-    ) -> dict[int, SessionData]:
-        """List all sessions with their calls."""
+    def list_sessions(self) -> dict[int, MonitoringSessionModel]:
+        """List all sessions."""
         with self._get_object_manager() as object_manager:
             session = object_manager.session
             sessions = (
@@ -171,57 +168,92 @@ class SessionRepository(BaseRepository):
             )
 
             sessions_data = {}
-            call_repo = FunctionCallRepository(self.db_path, self.pickle_config)
             for s in sessions:
-                tracked_calls = call_repo.get_calls_by_session(
-                    session_id=s.id, tracked_function=tracked_function
-                )
-                if tracked_calls:
-                    s_dict = sqlalchemy_to_dict(s)
-                    sessions_data[s.id] = SessionData(
-                        session=MonitoringSessionModel(**s_dict),
-                        calls=tracked_calls,
-                    )
+                s_dict = sqlalchemy_to_dict(s)
+                sessions_data[s.id] = MonitoringSessionModel(**s_dict)
             return sessions_data
 
     def get_session_relationships(
-        self, sessions_data: dict[int, SessionData]
+        self, sessions_data: dict[int, MonitoringSessionModel] | None
     ) -> dict[int, SessionRelationship]:
-        """Analyses parent/child relationships between the sessions."""
+        """Analyse les relations parent/enfant entre les sessions, avec pagination."""
         with self._get_object_manager() as object_manager:
             session = object_manager.session
-            session_relationships: dict[int, SessionRelationship] = {}
 
-            for session_id, data in sessions_data.items():
-                session_relationships[session_id] = SessionRelationship(
+            # Initialise les relations pour toutes les sessions
+            session_relationships: dict[int, SessionRelationship] = {
+                session_id: SessionRelationship(
                     parent_session_id=None,
                     branch_point_call_id=None,
                     branch_point_index=None,
                     child_sessions=[],
                 )
+                for session_id in sessions_data
+            }
 
-                for call in data.calls:
-                    if call.parent_call_id:
-                        parent_call = session.get(FunctionCall, call.parent_call_id)
-                        if parent_call and parent_call.session_id != session_id:
-                            parent_session_id = parent_call.session_id
-                            session_relationships[
-                                session_id
-                            ].parent_session_id = parent_session_id
-                            session_relationships[
-                                session_id
-                            ].branch_point_call_id = call.parent_call_id
+            # map entre parent_call_id -> (session_id, order_in_session)
+            parent_call_to_info: dict[int, tuple[int, int]] = {}
 
-                            if parent_session_id in sessions_data:
-                                parent_calls = sessions_data[parent_session_id].calls
-                                for i, parent_call_obj in enumerate(parent_calls):
-                                    if parent_call_obj.id == call.parent_call_id:
-                                        session_relationships[
-                                            session_id
-                                        ].branch_point_index = i
-                                        break
-                            break
+            size = 100
+            for session_id in sessions_data:
+                offset = 0
+                while True:
+                    calls_batch = (
+                        session.query(
+                            FunctionCall.id,
+                            FunctionCall.parent_call_id,
+                            FunctionCall.order_in_session,
+                        )
+                        .filter(FunctionCall.session_id == session_id)
+                        .offset(offset)
+                        .limit(size)
+                        .all()
+                    )
 
+                    if not calls_batch:
+                        break  # Plus d'appels pour cette session
+
+                    for call in calls_batch:
+                        if call.parent_call_id:
+                            if call.parent_call_id in parent_call_to_info:
+                                parent_session_id, parent_call_order = (
+                                    parent_call_to_info[call.parent_call_id]
+                                )
+                            else:
+                                parent_call = (
+                                    session.query(
+                                        FunctionCall.session_id,
+                                        FunctionCall.order_in_session,
+                                    )
+                                    .filter(FunctionCall.id == call.parent_call_id)
+                                    .first()
+                                )
+
+                                if parent_call:
+                                    parent_session_id = parent_call.session_id
+                                    parent_call_order = parent_call.order_in_session
+                                    parent_call_to_info[call.parent_call_id] = (
+                                        parent_session_id,
+                                        parent_call_order,
+                                    )
+                                else:
+                                    continue  # Parent introuvable
+
+                            # Màj de la relation si le parent est dans une autre session
+                            if parent_session_id != session_id:
+                                session_relationships[
+                                    session_id
+                                ].parent_session_id = parent_session_id
+                                session_relationships[
+                                    session_id
+                                ].branch_point_call_id = call.parent_call_id
+                                session_relationships[
+                                    session_id
+                                ].branch_point_index = parent_call_order
+
+                    offset += size  # Passe au lot suivant
+
+            # Ajoute les enfants aux parents
             for session_id, rel in session_relationships.items():
                 if rel.parent_session_id:
                     parent_id = rel.parent_session_id
@@ -242,6 +274,42 @@ class FunctionCallRepository(BaseRepository):
         super().__init__(db_path, pickle_config)
         self.session_repo = session_repo
 
+    def get_calls_by_session_paginated(
+        self,
+        session_id: int,
+        tracked_function: str | None = None,
+        size: int = 50,
+        offset: int = 0,
+    ) -> list[FunctionCallModel]:
+        """Récupère une page d'appels d'une session, avec pagination."""
+        with self._get_object_manager() as object_manager:
+            session = object_manager.session
+            query = session.query(FunctionCall).filter(
+                FunctionCall.session_id == session_id
+            )
+            if tracked_function:
+                query = query.filter(FunctionCall.function == tracked_function)
+            query = query.order_by(FunctionCall.order_in_session)
+            calls = query.offset(offset).limit(size).all()
+            return [FunctionCallModel(**sqlalchemy_to_dict(c)) for c in calls]
+
+    def get_all_calls_by_session_paginated(
+        self,
+        session_id: int,
+        tracked_function: str | None = None,
+        size: int = 50,
+    ) -> Generator[list[FunctionCallModel], None, None]:
+        """Générateur pour récupérer tous les appels d'une session par lots de taille `size`."""
+        offset = 0
+        while True:
+            calls = self.get_calls_by_session_paginated(
+                session_id, tracked_function, size, offset
+            )
+            if not calls:
+                break
+            yield calls
+            offset += size
+
     def get_call(self, call_id: int) -> FunctionCallModel | None:
         """Récupère un appel par son ID."""
         with self._get_object_manager() as object_manager:
@@ -256,17 +324,15 @@ class FunctionCallRepository(BaseRepository):
         self,
         session_id: int,
         tracked_function: str | None = None,
+        size: int = 50,
     ) -> list[FunctionCallModel]:
-        """Récupère tous les appels d'une session, optionnellement filtrés par fonction."""
-        with self._get_object_manager() as object_manager:
-            session = object_manager.session
-            query = session.query(FunctionCall).filter(
-                FunctionCall.session_id == session_id
-            )
-            if tracked_function:
-                query = query.filter(FunctionCall.function == tracked_function)
-            calls = query.order_by(FunctionCall.order_in_session).all()
-            return [FunctionCallModel(**sqlalchemy_to_dict(c)) for c in calls]
+        """Récupère tous les appels d'une session en utilisant la pagination."""
+        all_calls = []
+        for calls_page in self.get_all_calls_by_session_paginated(
+            session_id, tracked_function, size
+        ):
+            all_calls.extend(calls_page)
+        return all_calls
 
     def get_call_data(
         self,
@@ -303,7 +369,7 @@ class FunctionCallRepository(BaseRepository):
                 image_data=image_data,
                 variables=variables,
                 call_id=call.id,
-                timestamp=call.start_time,
+                start_time=call.start_time,
                 session_id=session_id,
                 call_index=call_index,
                 file=call.file,
@@ -312,6 +378,20 @@ class FunctionCallRepository(BaseRepository):
                 code_definition_id=call.code_definition_id,
             )
 
+    def get_call_count(
+        self,
+        session_id: int,
+    ) -> int:
+        with self._get_object_manager() as object_manager:
+            session = object_manager.session
+            return (
+                session.query(FunctionCall)
+                .where(FunctionCall.session_id == session_id)
+                .count()
+            )
+
+
+    # TODO: peut etre à enlever ?  | voir comment trouver les bons index !!!!
     def get_comparison_call_data(
         self,
         current_session_id: int,
@@ -326,47 +406,34 @@ class FunctionCallRepository(BaseRepository):
 
         if not self.session_repo:
             self.session_repo = SessionRepository(self.db_path, self.pickle_config)
-        sessions_data = self.session_repo.list_sessions(tracked_function)
+        sessions_data = self.session_repo.list_sessions()
         session_relationships = self.session_repo.get_session_relationships(
             sessions_data
         )
 
+        # si 'current' est le pere de 'comparaison'
         comparison_rel = session_relationships.get(
             comparison_session_id, SessionRelationship()
         )
-
-        # TODO peut etre à enlever
         if comparison_rel.parent_session_id == current_session_id:
-            branch_point_index = comparison_rel.branch_point_index
-            if (
-                branch_point_index is not None
-                and current_call_index >= branch_point_index
-            ):
-                offset_in_comparison = current_call_index - branch_point_index
-                comparison_calls = sessions_data[comparison_session_id].calls
-                if offset_in_comparison < len(comparison_calls):
-                    return self.get_call_data(
-                        comparison_session_id,
-                        offset_in_comparison,
-                        tracked_function,
-                        image_metadata_key,
-                    )
+            return self.get_call_data(
+                current_session_id,
+                current_call_index,
+                tracked_function,
+                image_metadata_key,
+            )
 
+        # si 'current' est le fils de 'comparaison'
         current_rel = session_relationships.get(
             current_session_id, SessionRelationship()
         )
         if current_rel.parent_session_id == comparison_session_id:
-            branch_point_index = current_rel.branch_point_index
-            if branch_point_index is not None:
-                comparison_index = branch_point_index + current_call_index
-                comparison_calls = sessions_data[comparison_session_id].calls
-                if comparison_index < len(comparison_calls):
-                    return self.get_call_data(
-                        comparison_session_id,
-                        comparison_index,
-                        tracked_function,
-                        image_metadata_key,
-                    )
+            return self.get_call_data(
+                comparison_session_id,
+                current_call_index,
+                tracked_function,
+                image_metadata_key,
+            )
 
         return None
 

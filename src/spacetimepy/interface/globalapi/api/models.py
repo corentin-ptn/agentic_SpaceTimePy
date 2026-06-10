@@ -91,14 +91,6 @@ class MonitoringSessionModel:
 
 
 @dataclass
-class SessionData:
-    """Données d'une session et de ses appels suivis."""
-
-    session: MonitoringSessionModel
-    calls: list[FunctionCallModel]
-
-
-@dataclass
 class VariablesData:
     """Variables locales et globales d'un appel."""
 
@@ -111,15 +103,16 @@ class CallData:
     """Données d'un appel de fonction."""
 
     call_id: int
-    timestamp: str
-    session_id: int
-    call_index: int
-    file: str
-    line: int
-    function: str
-    code_definition_id: str
+    start_time: str | None = None
+    session_id: int | None = None
+    call_index: int | None = None
+    file: str | None = None
+    line: int | None = None
+    function: str | None = None
+    code_definition_id: str | None = None
     image_data: Any | None = None
     variables: VariablesData = field(default_factory=VariablesData)
+
 
 @dataclass
 class StroboscopicFrame:
@@ -135,11 +128,11 @@ class SessionDetails:
     """Détails complets d'une session."""
 
     id: int
-    name: str
-    start_time: str
-    call_count: int
+    name: str | None = None
+    start_time: str | None = None
+    call_count: int | None = None
     end_time: str | None = None
-    calls: list[CallData] = field(default_factory=list)
+    calls: list[FunctionCallModel] = field(default_factory=list)
 
 
 @dataclass
@@ -165,10 +158,10 @@ class SessionListItem:
     """Élément de la liste des sessions."""
 
     session_id: int
-    name: str
-    start_time: str
-    call_count: int
-    is_branch: bool
+    name: str | None = None
+    start_time: str | None = None
+    # call_count: int
+    is_branch: bool = False
     parent_session_id: int | None = None
     branch_point_index: int | None = None
     child_sessions: list[int] = field(default_factory=list)

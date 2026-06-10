@@ -59,8 +59,8 @@ class GameExplorer:
         self.image_metadata_key = image_metadata_key
 
     def list_sessions(self) -> list[SessionListItem]:
-        """Liste toutes les sessions avec leurs appels suivis."""
-        sessions_data = self.session_repo.list_sessions(self.tracked_function)
+        """Liste toutes les sessions, avec option pour inclure les appels."""
+        sessions_data = self.session_repo.list_sessions()
         session_relationships = self.session_repo.get_session_relationships(
             sessions_data
         )
@@ -71,9 +71,8 @@ class GameExplorer:
             sessions.append(
                 SessionListItem(
                     session_id=session_id,
-                    name=data.session.name or f"Session {session_id}",
-                    start_time=data.session.start_time,
-                    call_count=len(data.calls),
+                    name=f"Session {session_id}",
+                    start_time=data.start_time,
                     is_branch=relationship.parent_session_id is not None,
                     parent_session_id=relationship.parent_session_id,
                     branch_point_index=relationship.branch_point_index,
@@ -82,31 +81,30 @@ class GameExplorer:
             )
         return sessions
 
-    def get_session_details(self, session_id: int) -> SessionDetails | None:
-        """Récupère les détails complets d'une session."""
-        sessions_data = self.session_repo.list_sessions(self.tracked_function)
+    def get_session_details(
+        self,
+        session_id: int,
+        call_details: bool = False,
+        # call_columns: list[str] | None = None,
+    ) -> SessionDetails | None:
+        """Récupère les détails d'une session, avec option pour les appels."""
+        sessions_data = self.session_repo.list_sessions()
         if session_id not in sessions_data:
             return None
 
         data = sessions_data[session_id]
         calls = []
-        for call_index in range(len(data.calls)):
-            call_data = self.call_repo.get_call_data(
-                session_id, call_index, self.tracked_function, self.image_metadata_key
-            )
-            if call_data:
-                calls.append(call_data)
+        calls_count = self.call_repo.get_call_count(session_id)
+
+        if call_details:
+            calls = self.call_repo.get_calls_by_session(session_id, self.tracked_function)
 
         return SessionDetails(
             id=session_id,
-            name=data.session.name,
-            start_time=_serialize_datetime(data.session.start_time),
-            end_time=(
-                _serialize_datetime(data.session.end_time)
-                if data.session.end_time
-                else None
-            ),
-            call_count=len(calls),
+            name=data.name,
+            start_time=_serialize_datetime(data.start_time),
+            end_time=_serialize_datetime(data.end_time) if data.end_time else None,
+            call_count=calls_count,
             calls=calls,
         )
 
