@@ -29,6 +29,7 @@ dependencies = [
 [project.scripts]
 web-spacetimepy = "spacetimepy.interface.web.explorer:main"
 live-game-explorer = "spacetimepy.interface.gameexplorer.livegameexplorer:main"
+globalapi = "spacetimepy.interface.globalapi.explorer:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spacetimepy"]

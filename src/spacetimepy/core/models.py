@@ -461,18 +461,18 @@ def init_db(db_path, in_memory=True):
     try:
         # Handle file-based databases
         if in_memory:
-            dest = sqlite3.connect(':memory:')
+            dest = sqlite3.connect(':memory:', check_same_thread=False)
             if db_path != ":memory:":
                 # Ensure we have an absolute path
                 db_path = os.path.abspath(db_path)
 
                 # If database exists but appears corrupted, create a backup
                 if os.path.exists(db_path):
-                    source = sqlite3.connect(db_path)
+                    source = sqlite3.connect(db_path, check_same_thread=False)
                     source.backup(dest)
                     db_path = ':memory:'
         else:
-            dest = sqlite3.connect(db_path)
+            dest = sqlite3.connect(db_path, check_same_thread=False)
 
 
         def get_connection():
