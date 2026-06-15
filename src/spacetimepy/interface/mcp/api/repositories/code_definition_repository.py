@@ -1,7 +1,7 @@
 from typing import Any
 
 from spacetimepy.core.models import CodeDefinition, CodeObjectLink
-from spacetimepy.interface.globalapi.api.models.dto import (
+from spacetimepy.interface.mcp.api.models.dto import (
     CodeDefinitionDTO,
     CodeObjectLinkDTO,
 )
@@ -52,6 +52,7 @@ class CodeDefinitionRepository(BaseRepository):
             session.add(definition)
             session.commit()
             return CodeDefinitionDTO(**sqlalchemy_to_dict(definition))
+
 
 class CodeObjectLinkRepository(BaseRepository):
     def get_link(self, link_id: int) -> CodeObjectLinkDTO | None:

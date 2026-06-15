@@ -8,24 +8,24 @@ API endpoints for SpaceTimePy database access.
 import logging
 from dataclasses import asdict
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastmcp import FastMCP
 
+from spacetimepy.core.models import init_db
 from spacetimepy.core.representation import PickleConfig
-from spacetimepy.interface.globalapi.api.models.dto import (
+from spacetimepy.interface.mcp.api.models.dto import (
     FunctionCallDTO,
 )
-from spacetimepy.interface.globalapi.api.models.models import (
+from spacetimepy.interface.mcp.api.models.models import (
     FunctionCallTree,
     SessionDetailsCalls,
     SessionDetailsRelations,
 )
-from spacetimepy.interface.globalapi.api.repositories import (
+from spacetimepy.interface.mcp.api.repositories import (
     FunctionCallRepository,
     MonitoringSessionRepository,
 )
-from spacetimepy.interface.globalapi.api.services import SessionService
-from spacetimepy.interface.globalapi.api.services.function_call_service import (
+from spacetimepy.interface.mcp.api.services import SessionService
+from spacetimepy.interface.mcp.api.services.function_call_service import (
     FunctionCallService,
 )
 
@@ -40,13 +40,17 @@ logger = logging.getLogger(__name__)
 # ********************************
 
 
-def create_app(db_path: str, session=None) -> FastAPI:
+def create_mcp(db_path: str, session=None) -> FastMCP:
 
     # ---------------------------------
     # --        Repositories         --
     # ---------------------------------
-    pickle_config = (PickleConfig(custom_picklers=["pygame"]),)
 
+    pickle_config = PickleConfig(custom_picklers=["pygame"])
+    if not session:
+        session = init_db(
+            db_path
+        )()  # add '()' to create a session, and not get a sessionmaker
     session_repo = MonitoringSessionRepository(db_path, pickle_config, session=session)
     call_repo = FunctionCallRepository(db_path, pickle_config, session=session)
 
@@ -61,46 +65,46 @@ def create_app(db_path: str, session=None) -> FastAPI:
     # --            App              --
     # ---------------------------------
 
-    app = FastAPI(
-        title="SpaceTimePy Explorer API",
-        description="REST endpoints for Explorer sessions",
-        version="1.0.0",
+    mcp = FastMCP(
+        name="SpaceTimePy Explorer API",
     )
 
-    # CORS Middleware
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # # CORS Middleware
+    # mcp.add_middleware(
+    #     CORSMiddleware,
+    #     allow_origins=["*"],
+    #     allow_credentials=True,
+    #     allow_methods=["*"],
+    #     allow_headers=["*"],
+    # )
 
     # ********************************
     # **          DB INFO           **
     # ********************************
-
-    @app.get("/api/db-info", response_model=dict[str, str])
-    def get_db_info():
+    @mcp.tool
+    def get_db_info_tool() -> dict[str, str]:
         """Get database path information."""
         try:
             return {"db_path": db_path}
         except Exception as e:
             logger.error(f"Error getting DB info: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            raise ValueError(f"Erreur while getting databse information: {e}")
 
     # ********************************
     # **         SESSIONS           **
     # ********************************
 
-    @app.get("/api/sessions", response_model=list[SessionDetailsRelations])
-    def list_sessions():
+    @mcp.tool
+    def list_sessions() -> list[SessionDetailsRelations]:
         """List all monitoring sessions."""
         return session_service.get_sessions_relationships()
 
-    @app.get("/api/session/{session_id}", response_model=SessionDetailsCalls)
-    def get_session_details(session_id: str):
-        """Get detailed information about a specific session."""
+    @mcp.tool
+    def get_session_details(session_id: int) -> SessionDetailsCalls:
+        """Get detailed information about a specific session.
+            Args:
+                session_id (int): Retrieve the details of the session with this specific ID
+        """
         try:
             session = session_service.get_session(session_id)
             if not session:
@@ -109,30 +113,21 @@ def create_app(db_path: str, session=None) -> FastAPI:
             return SessionDetailsCalls(**asdict(session), call_count=call_count)
         except Exception as e:
             logger.error(f"Error getting session details: {e}")
-            raise HTTPException(
-                status_code=404 if "not found" in str(e) else 400, detail=str(e)
-            ) from e
+            raise ValueError(f"Error while getting : {e}")
 
     # ********************************
     # **          CALLS             **
     # ********************************
 
-    @app.get(
-        "/api/sessions/{session_id}/calls/{call_index}", response_model=FunctionCallDTO
-    )
-    def get_call_data(session_id: int, call_index: int):
+    @mcp.tool
+    def get_call_data(session_id: int, call_index: int) -> FunctionCallDTO:
         """Get data for a specific function call."""
-        try:
-            call = call_service.get_calls_by_session_paginated(
-                session_id, 1, call_index
-            )
-            if len(call) >= 1:
-                return call[0]
-            raise ValueError("not found")
-        except ValueError as e:
-            raise HTTPException(status_code=404, detail=str(e)) from e
+        call = call_service.get_calls_by_session_paginated(session_id, 1, call_index)
+        if len(call) >= 1:
+            return call[0]
+        raise ValueError("session {session_id} or call n°{call_index} not found")
 
-    # @app.get(
+    # @mcp.get(
     #     "/api/sessions/{session_id}/compare/{comparison_session_id}/calls/{call_index}",
     #     response_model=dict[str, FunctionCallDTO],
     # )
@@ -147,7 +142,7 @@ def create_app(db_path: str, session=None) -> FastAPI:
     # **     STROBOSCOPIC FRAMES    **
     # ********************************
 
-    # @app.get(
+    # @mcp.get(
     #     "/api/sessions/{session_id}/stroboscopic/{call_index}",
     #     response_model=list[StroboscopicFrame],
     # )
@@ -169,7 +164,7 @@ def create_app(db_path: str, session=None) -> FastAPI:
     # **      STACK RECORDING       **
     # ********************************
 
-    # @app.get("/api/stack-recording/{function_id}")
+    # @mcp.get("/api/stack-recording/{function_id}")
     # def get_stack_recording(function_id: str):
     #     """Get stack recording data for a function call."""
     #     try:
@@ -185,32 +180,21 @@ def create_app(db_path: str, session=None) -> FastAPI:
     #         logger.error(f"Error getting stack recording: {e}")
     #         raise HTTPException(status_code=500, detail=str(e))
 
-    @app.get("/api/execution-tree/{call_id}", response_model=FunctionCallTree)
+    @mcp.tool
     def get_execution_tree(
-        call_id: int,
-        max_depth: int | None = Query(
-            None, description="Search term to filter function calls"
-        ),
-    ):
+        call_id: int, max_depth: int | None = None
+    ) -> FunctionCallTree:
         """Get stack recording data for a function call."""
-        try:
-            call = call_service.get_call(call_id)
-            if not call:
-                raise ValueError(f"function call {call_id} not found")
-            return call_service.get_execution_tree(call, max_depth)
-        except ValueError as e:
-            raise HTTPException(
-                status_code=404 if "not found" in str(e) else 400, detail=str(e)
-            ) from e
-        except Exception as e:
-            logger.error(f"Error getting execution tree: {e}")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+        call = call_service.get_call(call_id)
+        if not call:
+            raise ValueError(f"function call {call_id} not found")
+        return call_service.get_execution_tree(call, max_depth)
 
     # ********************************
     # **       FUNCTION CALLS       **
     # ********************************
 
-    # @app.get("/api/function-calls", response_model=list[FunctionCallModel])
+    # @mcp.get("/api/function-calls", response_model=list[FunctionCallModel])
     # def get_function_calls(
     #     search: str | None = Query(
     #         None, description="Search term to filter function calls"
@@ -225,7 +209,7 @@ def create_app(db_path: str, session=None) -> FastAPI:
     #         logger.error(f"Error getting function calls: {e}")
     #         raise HTTPException(status_code=500, detail=str(e))
 
-    return app
+    return mcp
 
 
 # ********************************
@@ -233,20 +217,19 @@ def create_app(db_path: str, session=None) -> FastAPI:
 # ********************************
 
 
-def run_api(
+def run_mcp(
     db_file: str,
     host: str = "127.0.0.1",
-    port: int = 8000,
+    port: int = 3001,
     tracked_function: str | None = None,  # Ex: "display_game"
     image_metadata_key: str | None = None,  # Ex: "image"
     image_scale: float = 0.8,
 ):
     """Run the API server."""
-    import uvicorn
 
     try:
-        app = create_app(db_file)
-        logger.info(f"Starting API server at http://{host}:{port}")
-        uvicorn.run(app, host=host, port=port)
+        mcp = create_mcp(db_file)
+        logger.info(f"Starting MCP server at http://{host}:{port}")
+        mcp.run(transport="streamable-http", host=host, port=port)
     except KeyboardInterrupt:
         logger.info("API server stopped.")

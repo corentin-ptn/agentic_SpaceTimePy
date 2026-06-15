@@ -1,7 +1,7 @@
 from typing import Any
 
 from spacetimepy.core.models import ObjectIdentity, StoredObject
-from spacetimepy.interface.globalapi.api.models.dto import (
+from spacetimepy.interface.mcp.api.models.dto import (
     ObjectIdentityDTO,
     StoredObjectDTO,
 )

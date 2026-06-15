@@ -29,7 +29,7 @@ dependencies = [
 [project.scripts]
 web-spacetimepy = "spacetimepy.interface.web.explorer:main"
 live-game-explorer = "spacetimepy.interface.gameexplorer.livegameexplorer:main"
-globalapi = "spacetimepy.interface.globalapi.explorer:main"
+mcp = "spacetimepy.interface.mcp.explorer:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/spacetimepy"]
@@ -74,6 +74,9 @@ debug = [
     "debugpy>=1.8.14",
     "pydevd>=3.3.0",
 ]
+mcp = [
+    "fastmcp>=3.4.2",
+]
 
 
 [tool.ruff.lint]
@@ -104,5 +107,6 @@ ignore = [
     "EM101",   # raw-string-in-exception
     "FIX002",  # line-contains-todo
     "E501",    # Line too long
+    "TD002",   # Missing authors on todo
     "TD003",   # Missing issue link on todo
 ]

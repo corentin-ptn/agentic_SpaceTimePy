@@ -1,9 +1,9 @@
 from collections.abc import Generator
 from dataclasses import asdict
 
-from spacetimepy.interface.globalapi.api.models.dto import FunctionCallDTO
-from spacetimepy.interface.globalapi.api.models.models import FunctionCallTree
-from spacetimepy.interface.globalapi.api.repositories.function_call_repository import (
+from spacetimepy.interface.mcp.api.models.dto import FunctionCallDTO
+from spacetimepy.interface.mcp.api.models.models import FunctionCallTree
+from spacetimepy.interface.mcp.api.repositories.function_call_repository import (
     FunctionCallRepository,
 )
 

@@ -1,5 +1,5 @@
 from spacetimepy.core.models import MonitoringSession
-from spacetimepy.interface.globalapi.api.models.dto import MonitoringSessionDTO
+from spacetimepy.interface.mcp.api.models.dto import MonitoringSessionDTO
 
 from .base_repository import BaseRepository, sqlalchemy_to_dict
 

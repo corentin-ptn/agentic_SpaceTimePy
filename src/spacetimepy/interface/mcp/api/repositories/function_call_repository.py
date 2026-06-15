@@ -2,7 +2,7 @@ from collections.abc import Generator
 from typing import Any
 
 from spacetimepy.core.models import FunctionCall
-from spacetimepy.interface.globalapi.api.models.dto import FunctionCallDTO
+from spacetimepy.interface.mcp.api.models.dto import FunctionCallDTO
 
 from .base_repository import BaseRepository, sqlalchemy_to_dict
 

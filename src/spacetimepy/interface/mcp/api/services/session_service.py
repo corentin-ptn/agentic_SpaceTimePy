@@ -1,15 +1,15 @@
 from dataclasses import asdict
 
-from spacetimepy.interface.globalapi.api.models.dto import (
+from spacetimepy.interface.mcp.api.models.dto import (
     MonitoringSessionDTO,
 )
-from spacetimepy.interface.globalapi.api.models.models import (
+from spacetimepy.interface.mcp.api.models.models import (
     SessionDetailsRelations,
 )
-from spacetimepy.interface.globalapi.api.repositories.function_call_repository import (
+from spacetimepy.interface.mcp.api.repositories.function_call_repository import (
     FunctionCallRepository,
 )
-from spacetimepy.interface.globalapi.api.repositories.monitoring_session_repository import (
+from spacetimepy.interface.mcp.api.repositories.monitoring_session_repository import (
     MonitoringSessionRepository,
 )
 
