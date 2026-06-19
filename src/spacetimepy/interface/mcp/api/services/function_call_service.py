@@ -123,7 +123,7 @@ class FunctionCallService:
 
         # Stop recursion if we've reached max depth
         if max_depth is not None and current_depth >= max_depth:
-            return call
+            return FunctionCallTree.from_dict(asdict(call))
 
         # Get child calls ordered by execution
         children = self.get_child_calls(call.id)
@@ -136,6 +136,6 @@ class FunctionCallService:
             child_node = self.get_execution_tree(
                 child, max_depth=max_depth, current_depth=current_depth + 1
             )
-            node.children.append(FunctionCallTree(**asdict(child_node)))
+            node.children.append(child_node)
 
         return node
