@@ -1,5 +1,7 @@
 from typing import Any
 
+from sqlalchemy import desc
+
 from spacetimepy.core.models import ObjectIdentity, StoredObject
 from spacetimepy.interface.mcp.api.models.dto import (
     ObjectIdentityDTO,
@@ -53,27 +55,20 @@ class ObjectIdentityRepository(BaseRepository):
             session.commit()
             return ObjectIdentityDTO(**sqlalchemy_to_dict(identity))
 
-    def get_latest_version(self, identity_id: int) -> StoredObjectDTO | None:
-        """
-        Retrieve the last version of an object.
-
-        Args:
-            identity_id: The unique identifier of the object entity.
-
-        Returns:
-            ObjectIdentityDTO: The DTO representation of the object entity, or None if not found.
-        """
-        with self._get_session() as session:
-            identity = session.query(ObjectIdentity).get(identity_id)
-            if not identity:
-                return None
-            latest_version = identity.get_latest_version(session)
-            if not latest_version:
-                return None
-            return StoredObjectDTO(**sqlalchemy_to_dict(latest_version))
-
 
 class StoredObjectRepository(BaseRepository):
+    def _sqlalchemy_to_dict(self, obj: Any) -> dict[str, Any]:
+        if obj is None:
+            return None
+        result = sqlalchemy_to_dict(obj)
+        with self._get_object_manager() as object_manager:
+            result["pickle_data"] = object_manager.get(result["id"])[0]
+            return result
+
+    def _unpickle(self, obj_id: int):
+        with self._get_object_manager() as object_manager:
+            return object_manager.get(obj_id)[0]
+
     def get_object(self, object_id: str) -> StoredObjectDTO | None:
         """
         Retrieve an object (object with its value) by its ID.
@@ -85,10 +80,31 @@ class StoredObjectRepository(BaseRepository):
             StoredObjectDTO: The DTO representation of the object, or None if not found.
         """
         with self._get_session() as session:
-            obj = session.query(StoredObject).get(object_id)
-            if not obj:
+            data = session.query(StoredObject).get(object_id)
+            if data is None:
                 return None
-            return StoredObjectDTO(**sqlalchemy_to_dict(obj))
+            return StoredObjectDTO(**self._sqlalchemy_to_dict(data))
+
+    def get_last_version_object(self, identity_id: str) -> StoredObjectDTO | None:
+        """
+        Retrieve the last version of an object.
+
+        Args:
+            identity_id: The unique identifier of the object entity.
+
+        Returns:
+            StoredObjectDTO: The DTO representation of the object entity, or None if not found.
+        """
+        with self._get_session() as session:
+            data = (
+                session.query(StoredObject)
+                .filter(StoredObject.identity_id == identity_id)
+                .order_by(desc(StoredObject.version_number))
+                .first()
+            )
+            if data is None:
+                return None
+            return StoredObjectDTO(**self._sqlalchemy_to_dict(data))
 
     def list_objects(self) -> list[StoredObjectDTO]:
         """
@@ -98,8 +114,8 @@ class StoredObjectRepository(BaseRepository):
             list[StoredObjectDTO]: A list of DTO representations of all stored objects.
         """
         with self._get_session() as session:
-            objects = session.query(StoredObject).all()
-            return [StoredObjectDTO(**sqlalchemy_to_dict(o)) for o in objects]
+            data = session.query(StoredObject).all()
+            return [StoredObjectDTO(**self._sqlalchemy_to_dict(d)) for d in data]
 
     def create_object(self, object_data: dict[str, Any]) -> StoredObjectDTO:
         """
@@ -115,4 +131,4 @@ class StoredObjectRepository(BaseRepository):
             obj = StoredObject(**object_data)
             session.add(obj)
             session.commit()
-            return StoredObjectDTO(**sqlalchemy_to_dict(obj))
+            return StoredObjectDTO(**self._sqlalchemy_to_dict(obj))

@@ -76,6 +76,7 @@ debug = [
 ]
 mcp = [
     "fastmcp>=3.4.2",
+    "requests>=2.34.2",
 ]
 
 

@@ -1,6 +1,8 @@
 from collections.abc import Generator
 from typing import Any
 
+from sqlalchemy import func
+
 from spacetimepy.core.models import FunctionCall
 from spacetimepy.interface.mcp.api.models.dto import FunctionCallDTO
 
@@ -24,7 +26,7 @@ class FunctionCallRepository(BaseRepository):
                 return None
             return FunctionCallDTO(**sqlalchemy_to_dict(call))
 
-    def get_calls_count_by_session(self, session_id: int) -> int:
+    def get_calls_count_by_session(self, session_id: int) -> dict[str, int]:
         """
         Retrieve the count of function calls for a specific session.
 
@@ -32,14 +34,16 @@ class FunctionCallRepository(BaseRepository):
             session_id: The unique identifier of the session.
 
         Returns:
-            int: The number of function calls in the session.
+            dict[str, int]: key: The name of the function called, value: The number of calls in the session.
         """
         with self._get_session() as session:
-            return (
-                session.query(FunctionCall.id)
+            results = (
+                session.query(FunctionCall.function, func.count(FunctionCall.id))
                 .where(FunctionCall.session_id == session_id)
-                .count()
+                .group_by(FunctionCall.function)
+                .all()
             )
+            return dict(results)
 
     def list_calls_by_session(self, session_id: int) -> list[FunctionCallDTO]:
         """

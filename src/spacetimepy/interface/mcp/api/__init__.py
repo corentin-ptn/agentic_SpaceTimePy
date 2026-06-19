@@ -20,8 +20,13 @@ from .repositories import (
     StoredObjectRepository,
 )
 from .services import (
+    CodeDefinitionService,
+    CodeObjectLinkService,
     FunctionCallService,
+    ObjectIdentityService,
     SessionService,
+    SnapshotService,
+    StoredObjectService,
 )
 
 __all__ = [
@@ -47,4 +52,9 @@ __all__ = [
     # Services
     "SessionService",
     "FunctionCallService",
+    "SnapshotService",
+    "CodeDefinitionService",
+    "CodeObjectLinkService",
+    "StoredObjectService",
+    "ObjectIdentityService",
 ]

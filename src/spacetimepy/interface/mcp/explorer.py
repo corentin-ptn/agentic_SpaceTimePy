@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 def run_explorer(
     db_file: str,
     api_host: str = "127.0.0.1",
-    api_port: int = 3001,
+    api_port: int = 3002,
 ) -> None:
     """Run the web explorer.
 
@@ -43,7 +43,7 @@ def main():
         "--api-host", default="127.0.0.1", help="Host to run the API server on"
     )
     parser.add_argument(
-        "--api-port", type=int, default=3001, help="Port to run the API server on"
+        "--api-port", type=int, default=3002, help="Port to run the API server on"
     )
 
     args = parser.parse_args()

@@ -1,4 +1,4 @@
-# import datetime
+import datetime
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import Any
@@ -12,13 +12,15 @@ from spacetimepy.core.representation import PickleConfig
 
 def sqlalchemy_to_dict(obj: Any) -> dict[str, Any]:
     """Convert an SQLAlchemy object into a dictionary, with serialization of datetime."""
+    if obj is None:
+        return None
     result = {}
     for c in inspect(obj).mapper.column_attrs:
         value = getattr(obj, c.key)
-        # if isinstance(value, (datetime.datetime, datetime.date)):
-        #     result[c.key] = value.isoformat()
-        # else:
-        result[c.key] = value
+        if isinstance(value, (datetime.datetime, datetime.date)):
+            result[c.key] = value.isoformat()
+        else:
+            result[c.key] = value
     return result
 
 

@@ -2,7 +2,10 @@ from collections.abc import Generator
 from dataclasses import asdict
 
 from spacetimepy.interface.mcp.api.models.dto import FunctionCallDTO
-from spacetimepy.interface.mcp.api.models.models import FunctionCallTree
+from spacetimepy.interface.mcp.api.models.models import (
+    FunctionCallDTOSummary,
+    FunctionCallTree,
+)
 from spacetimepy.interface.mcp.api.repositories.function_call_repository import (
     FunctionCallRepository,
 )
@@ -27,7 +30,7 @@ class FunctionCallService:
         """
         return self.call_repo.get_call(call_id)
 
-    def get_calls_count_by_session(self, session_id: int) -> int:
+    def get_calls_count_by_session(self, session_id: int) -> dict[str, int]:
         """Retrieve the number of function calls for a session.
 
         Args:
@@ -38,7 +41,7 @@ class FunctionCallService:
         """
         return self.call_repo.get_calls_count_by_session(session_id)
 
-    def list_calls_by_session(self, session_id: int) -> list[FunctionCallDTO]:
+    def list_calls_by_session(self, session_id: int) -> list[FunctionCallDTOSummary]:
         """List all function calls for a session.
 
         Args:
@@ -47,7 +50,10 @@ class FunctionCallService:
         Returns:
             A list of FunctionCallDTOs for the session.
         """
-        return self.call_repo.list_calls_by_session(session_id)
+        return [
+            FunctionCallDTOSummary.from_dict(asdict(f_call))
+            for f_call in self.call_repo.list_calls_by_session(session_id)
+        ]
 
     def get_calls_by_session_paginated(
         self,
@@ -123,7 +129,7 @@ class FunctionCallService:
         children = self.get_child_calls(call.id)
 
         # Build the current node
-        node = FunctionCallTree(**asdict(call))
+        node = FunctionCallTree.from_dict(asdict(call))
 
         # Recursively add children
         for child in children:

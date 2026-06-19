@@ -4,7 +4,7 @@ from spacetimepy.interface.mcp.api.models.dto import (
     MonitoringSessionDTO,
 )
 from spacetimepy.interface.mcp.api.models.models import (
-    SessionDetailsRelations,
+    SessionSummaryRelations,
 )
 from spacetimepy.interface.mcp.api.repositories.function_call_repository import (
     FunctionCallRepository,
@@ -48,15 +48,15 @@ class SessionService:
 
     # --- Domain logic ---
 
-    def get_sessions_relationships(self) -> list[SessionDetailsRelations]:
+    def get_sessions_relationships(self) -> list[SessionSummaryRelations]:
         """Analyze parent/child relationships between sessions.
 
         Returns:
             A list of SessionDetailsRelations representing the relationships between sessions.
         """
         sessions_data = self.list_sessions()
-        session_relationships: dict[int, SessionDetailsRelations] = {
-            session.id: SessionDetailsRelations(**asdict(session))
+        session_relationships: dict[int, SessionSummaryRelations] = {
+            session.id: SessionSummaryRelations.from_dict(asdict(session))
             for session in sessions_data
         }
 

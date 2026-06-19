@@ -22,7 +22,7 @@ class StoredObjectDTO:
     type_name: str
     is_primitive: bool
     primitive_value: str | None
-    pickle_data: bytes | None
+    pickle_data: Any | None
 
 
 # --- DTOs for StackSnapshot et StackSnapshotEdge ---

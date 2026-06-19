@@ -16,17 +16,42 @@ from spacetimepy.interface.mcp.api.models.dto import (
     FunctionCallDTO,
 )
 from spacetimepy.interface.mcp.api.models.models import (
+    FunctionCallDTOSummary,
     FunctionCallTree,
     SessionDetailsCalls,
-    SessionDetailsRelations,
+    SessionSummaryRelations,
 )
 from spacetimepy.interface.mcp.api.repositories import (
     FunctionCallRepository,
     MonitoringSessionRepository,
 )
+from spacetimepy.interface.mcp.api.repositories.code_definition_repository import (
+    CodeDefinitionRepository,
+    CodeObjectLinkRepository,
+)
+from spacetimepy.interface.mcp.api.repositories.object_identity_repository import (
+    ObjectIdentityRepository,
+    StoredObjectRepository,
+)
+from spacetimepy.interface.mcp.api.repositories.stack_snapshot_repository import (
+    StackSnapshotEdgeRepository,
+    StackSnapshotRepository,
+)
 from spacetimepy.interface.mcp.api.services import SessionService
+from spacetimepy.interface.mcp.api.services.code_def_service import (
+    CodeDefinitionService,
+    CodeObjectLinkService,
+)
 from spacetimepy.interface.mcp.api.services.function_call_service import (
     FunctionCallService,
+)
+from spacetimepy.interface.mcp.api.services.object_service import (
+    ObjectIdentityService,
+    StoredObjectService,
+)
+from spacetimepy.interface.mcp.api.services.snapshot_service import (
+    SnapshotEdgeService,
+    SnapshotService,
 )
 
 # Configure logging
@@ -36,7 +61,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ********************************
-# **        API ROUTES          **
+# **         MCP TOOLS          **
 # ********************************
 
 
@@ -51,8 +76,15 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
         session = init_db(
             db_path
         )()  # add '()' to create a session, and not get a sessionmaker
-    session_repo = MonitoringSessionRepository(db_path, pickle_config, session=session)
-    call_repo = FunctionCallRepository(db_path, pickle_config, session=session)
+
+    session_repo = MonitoringSessionRepository(db_path, pickle_config, session)
+    call_repo = FunctionCallRepository(db_path, pickle_config, session)
+    snapshot_repo = StackSnapshotRepository(db_path, pickle_config, session)
+    snapshot_edge_repo = StackSnapshotEdgeRepository(db_path, pickle_config, session)
+    object_identity_repo = ObjectIdentityRepository(db_path, pickle_config, session)
+    stored_object_repo = StoredObjectRepository(db_path, pickle_config, session)
+    code_def_repo = CodeDefinitionRepository(db_path, pickle_config, session)
+    code_obj_link_repo = CodeObjectLinkRepository(db_path, pickle_config, session)
 
     # ---------------------------------
     # --          Services           --
@@ -60,27 +92,25 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
 
     session_service = SessionService(session_repo, call_repo)
     call_service = FunctionCallService(call_repo)
+    snapshot_service = SnapshotService(snapshot_repo)
+    snapshot_edge_service = SnapshotEdgeService(snapshot_edge_repo)
+    object_identity_service = ObjectIdentityService(object_identity_repo)
+    stored_object_service = StoredObjectService(stored_object_repo)
+    code_def_service = CodeDefinitionService(code_def_repo)
+    code_obj_link_service = CodeObjectLinkService(code_obj_link_repo)
 
     # ---------------------------------
-    # --            App              --
+    # --            MCP              --
     # ---------------------------------
 
     mcp = FastMCP(
         name="SpaceTimePy Explorer API",
     )
 
-    # # CORS Middleware
-    # mcp.add_middleware(
-    #     CORSMiddleware,
-    #     allow_origins=["*"],
-    #     allow_credentials=True,
-    #     allow_methods=["*"],
-    #     allow_headers=["*"],
-    # )
-
     # ********************************
     # **          DB INFO           **
     # ********************************
+
     @mcp.tool
     def get_db_info_tool() -> dict[str, str]:
         """Get database path information."""
@@ -95,15 +125,16 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
     # ********************************
 
     @mcp.tool
-    def list_sessions() -> list[SessionDetailsRelations]:
+    def list_sessions() -> list[SessionSummaryRelations]:
         """List all monitoring sessions."""
         return session_service.get_sessions_relationships()
 
     @mcp.tool
     def get_session_details(session_id: int) -> SessionDetailsCalls:
-        """Get detailed information about a specific session.
-            Args:
-                session_id (int): Retrieve the details of the session with this specific ID
+        """
+        Get detailed information about a specific session.
+        Args:
+            session_id (int): Retrieve the details of the session with this specific ID
         """
         try:
             session = session_service.get_session(session_id)
@@ -116,98 +147,225 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
             raise ValueError(f"Error while getting : {e}")
 
     # ********************************
-    # **          CALLS             **
+    # **       FUNCTION CALLS       **
     # ********************************
 
     @mcp.tool
     def get_call_data(session_id: int, call_index: int) -> FunctionCallDTO:
-        """Get data for a specific function call."""
+        """
+        Get data for a specific function call.
+        Args:
+            session_id (int): The session ID to get the function call from
+            call_index (int): The FunctionCall index to retrieve (`call_index` >= 0)
+        """
         call = call_service.get_calls_by_session_paginated(session_id, 1, call_index)
         if len(call) >= 1:
             return call[0]
-        raise ValueError("session {session_id} or call n°{call_index} not found")
+        raise ValueError(f"session {session_id} or call n°{call_index} not found")
 
-    # @mcp.get(
-    #     "/api/sessions/{session_id}/compare/{comparison_session_id}/calls/{call_index}",
-    #     response_model=dict[str, FunctionCallDTO],
-    # )
-    # def compare_call_data(session_id: int, comparison_session_id: int, call_index: int):
-    #     """Compare call data between two sessions."""
-    #     try:
-    #         return {}
-    #     except ValueError as e:
-    #         raise HTTPException(status_code=404, detail=str(e))
+    @mcp.tool
+    def list_calls_by_session(session_id: int) -> list[FunctionCallDTOSummary]:
+        """
+        List all function calls for a session.
+        Args:
+            session_id (int): The ID of the session.
+        """
+        return call_service.list_calls_by_session(session_id)
 
-    # ********************************
-    # **     STROBOSCOPIC FRAMES    **
-    # ********************************
+    @mcp.tool
+    def get_calls_paginated(session_id: int, size: int = 50, offset: int = 0):
+        """
+        Retrieve a paginated list of function calls for a session.
+        Args:
+            session_id (int): The ID of the session.
+            size (int): The number of calls to retrieve per page.
+            offset (int): The offset for pagination.
+        """
+        return call_service.get_calls_by_session_paginated(session_id, size, offset)
 
-    # @mcp.get(
-    #     "/api/sessions/{session_id}/stroboscopic/{call_index}",
-    #     response_model=list[StroboscopicFrame],
-    # )
-    # def get_stroboscopic_frames(
-    #     session_id: int,
-    #     call_index: int,
-    #     ghost_count: int = 4,
-    #     offset: int = 2,
-    # ):
-    #     """Get stroboscopic frames for a call."""
-    #     try:
-    #         return service.get_stroboscopic_frames(
-    #             session_id, call_index, ghost_count, offset
-    #         )
-    #     except ValueError as e:
-    #         raise HTTPException(status_code=400, detail=str(e))
-
-    # ********************************
-    # **      STACK RECORDING       **
-    # ********************************
-
-    # @mcp.get("/api/stack-recording/{function_id}")
-    # def get_stack_recording(function_id: str):
-    #     """Get stack recording data for a function call."""
-    #     try:
-    #         # return call.(function_id)
-    #         pass
-    #     except NotImplementedError as e:
-    #         raise HTTPException(status_code=501, detail=str(e))
-    #     except ValueError as e:
-    #         raise HTTPException(
-    #             status_code=404 if "not found" in str(e) else 400, detail=str(e)
-    #         ) from e
-    #     except Exception as e:
-    #         logger.error(f"Error getting stack recording: {e}")
-    #         raise HTTPException(status_code=500, detail=str(e))
+    @mcp.tool
+    def get_child_calls(call_id: int):
+        """
+        Retrieve the child calls of a function call.
+        Args:
+            call_id (int): The ID of the parent function call.
+        """
+        return call_service.get_child_calls(call_id)
 
     @mcp.tool
     def get_execution_tree(
         call_id: int, max_depth: int | None = None
     ) -> FunctionCallTree:
-        """Get stack recording data for a function call."""
+        """
+        Get stack recording data for a function call.
+        Args:
+            call_id (int): The FunctionCall Id to look at (will be the parent of the tree)
+            max_depth (int | None): the maximum depth of the tree. If `None`, there will be no maximum depth.
+        """
         call = call_service.get_call(call_id)
         if not call:
             raise ValueError(f"function call {call_id} not found")
         return call_service.get_execution_tree(call, max_depth)
 
     # ********************************
-    # **       FUNCTION CALLS       **
+    # **          Snapshots         **
     # ********************************
 
-    # @mcp.get("/api/function-calls", response_model=list[FunctionCallModel])
-    # def get_function_calls(
-    #     search: str | None = Query(
-    #         None, description="Search term to filter function calls"
-    #     ),
-    #     file: str | None = Query(None, description="File filter"),
-    #     function: str | None = Query(None, description="Function name filter"),
-    # ):
-    #     """Get a list of function calls with optional filtering."""
-    #     try:
-    #         return service.(search, file, function)
-    #     except Exception as e:
-    #         logger.error(f"Error getting function calls: {e}")
-    #         raise HTTPException(status_code=500, detail=str(e))
+    @mcp.tool
+    def load_snapshot(snapshotId: int, ip: str = "localhost", port: int = 3000) -> bool:
+        """
+        Modify the current debug session to load the state of the snapshot Id and place the debugger to the snapshot line corresponding.
+        Args:
+            snapshotId (int): The ID of the snapshot to load.
+            ip (str): The IP address of the target machine.
+            port (int): The port of the target machine.
+        """
+        return snapshot_service.load_snapshot(snapshotId, ip=ip, port=port)
+
+    @mcp.tool
+    def get_snapshot(snapshot_id: int):
+        """
+        Retrieve a snapshot by its ID.
+        Args:
+            snapshot_id (int): The ID of the snapshot.
+        """
+        return snapshot_service.get_snapshot(snapshot_id)
+
+    @mcp.tool
+    def list_snapshots_by_call(function_call_id: int):
+        """
+        List all snapshots depending of a function call.
+        Args:
+            function_call_id (int): The ID of the function call.
+        """
+        return snapshot_service.list_snapshots_by_call(function_call_id)
+
+    @mcp.tool
+    def get_previous_snapshot(snapshot_id: int):
+        """
+        Retrieve the predecessor snapshot.
+        Args:
+            snapshot_id (int): The ID of the snapshot.
+        """
+        return snapshot_service.get_previous_snapshot(snapshot_id)
+
+    @mcp.tool
+    def get_snapshot_successors(snapshot_id: int, edge_type: str | None = None):
+        """
+        Retrieve the list of next snapshots.
+        Args:
+            snapshot_id (int): The ID of the snapshot.
+            edge_type (str | None): Optional filter for the edge type.
+        """
+        return snapshot_service.get_successors(snapshot_id, edge_type)
+
+    # ********************************
+    # **       Snapshots Edge       **
+    # ********************************
+
+    @mcp.tool
+    def get_snapshot_edge(edge_id: int):
+        """
+        Retrieve a snapshot edge by its ID.
+        Args:
+            edge_id (int): The ID of the edge.
+        """
+        return snapshot_edge_service.get_edge(edge_id)
+
+    @mcp.tool
+    def list_snapshot_edges_by_type(edge_type: str):
+        """
+        Retrieve all snapshot edges of a specific type.
+        Args:
+            edge_type (str): The type of the edge.
+        """
+        return snapshot_edge_service.list_edges_by_type(edge_type)
+
+    # ********************************
+    # **         OBJECTS            **
+    # ********************************
+
+    @mcp.tool
+    def get_object_identity(identity_id: int):
+        """
+        Retrieve an object entity by its ID.
+        Args:
+            identity_id (int): The unique identifier of the object entity.
+        """
+        return object_identity_service.get_identity(identity_id)
+
+    @mcp.tool
+    def list_object_identities():
+        """List all object entities."""
+        return object_identity_service.list_identities()
+
+    @mcp.tool
+    def get_stored_object(object_id: str):
+        """
+        Retrieve an object (object with its value) by its ID.
+        Args:
+            object_id (str): The unique identifier of the object.
+        """
+        return stored_object_service.get_object(object_id)
+
+    @mcp.tool
+    def get_latest_object_version(object_identity_id: int):
+        """
+        Retrieve the last version of an object.
+        Args:
+            object_identity_id (int): The unique identifier of the object entity.
+        """
+        return stored_object_service.get_latest_version(object_identity_id)
+
+    @mcp.tool
+    def list_stored_objects():
+        """List all stored objects ordered by their starting time."""
+        return stored_object_service.list_objects()
+
+    # ********************************
+    # **           CODE             **
+    # ********************************
+
+    @mcp.tool
+    def get_code_definition(definition_id: str):
+        """
+        Retrieve a code definition by its ID.
+        Args:
+            definition_id (str): The unique identifier of the code definition.
+        """
+        return code_def_service.get_definition(definition_id)
+
+    @mcp.tool
+    def list_code_definitions():
+        """List all code definitions."""
+        return code_def_service.list_definitions()
+
+    @mcp.tool
+    def get_code_object_link(link_id: int):
+        """
+        Retrieve a link by its ID.
+        Args:
+            link_id (int): The unique identifier of the link.
+        """
+        return code_obj_link_service.get_link(link_id)
+
+    @mcp.tool
+    def list_links_by_object(object_id: str):
+        """
+        List all links associated with a specific object.
+        Args:
+            object_id (str): The unique identifier of the object.
+        """
+        return code_obj_link_service.list_links_by_object(object_id)
+
+    @mcp.tool
+    def list_links_by_definition(definition_id: str):
+        """
+        List all links associated with a specific code definition.
+        Args:
+            definition_id (str): The unique identifier of the code definition.
+        """
+        return code_obj_link_service.list_links_by_definition(definition_id)
 
     return mcp
 
@@ -220,12 +378,12 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
 def run_mcp(
     db_file: str,
     host: str = "127.0.0.1",
-    port: int = 3001,
+    port: int = 3002,
     tracked_function: str | None = None,  # Ex: "display_game"
     image_metadata_key: str | None = None,  # Ex: "image"
     image_scale: float = 0.8,
 ):
-    """Run the API server."""
+    """Run the MPC server."""
 
     try:
         mcp = create_mcp(db_file)
