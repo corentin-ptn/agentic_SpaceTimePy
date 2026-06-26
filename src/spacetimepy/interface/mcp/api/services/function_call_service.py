@@ -9,13 +9,21 @@ from spacetimepy.interface.mcp.api.models.models import (
 from spacetimepy.interface.mcp.api.repositories.function_call_repository import (
     FunctionCallRepository,
 )
+from spacetimepy.interface.mcp.api.repositories.stack_snapshot_repository import (
+    StackSnapshotRepository,
+)
 
 
 class FunctionCallService:
     """Service to manage function calls and their logic."""
 
-    def __init__(self, call_repo: FunctionCallRepository):
+    def __init__(
+        self,
+        call_repo: FunctionCallRepository,
+        snapshot_service: StackSnapshotRepository,
+    ):
         self.call_repo = call_repo
+        self.snapshot_service = snapshot_service
 
     # --- Direct calls to repository ---
 
@@ -51,7 +59,12 @@ class FunctionCallService:
             A list of FunctionCallDTOs for the session.
         """
         return [
-            FunctionCallDTOSummary.from_dict(asdict(f_call))
+            FunctionCallDTOSummary.from_dict({
+                **asdict(f_call),
+                "nb_snapshots": self.snapshot_service.get_snapshot_count_by_call(
+                    f_call.id
+                ),
+            })
             for f_call in self.call_repo.list_calls_by_session(session_id)
         ]
 
@@ -72,6 +85,21 @@ class FunctionCallService:
             A paginated list of FunctionCallDTOs for the session.
         """
         return self.call_repo.get_calls_by_session_paginated(session_id, size, offset)
+
+    def search_calls(
+        self, session_id: int, function_name: str
+    ) -> list[FunctionCallDTO]:
+        """
+        Search for function calls by function name within a session.
+
+        Args:
+            session_id: The ID of the session.
+            function_name: The name of the function to search for.
+
+        Returns:
+            A list of matching FunctionCallDTOs.
+        """
+        return self.call_repo.search_calls_by_function_name(session_id, function_name)
 
     def get_all_calls_by_session_paginated(
         self,
@@ -123,13 +151,27 @@ class FunctionCallService:
 
         # Stop recursion if we've reached max depth
         if max_depth is not None and current_depth >= max_depth:
-            return FunctionCallTree.from_dict(asdict(call))
+            return FunctionCallTree.from_dict(
+                {
+                    **asdict(call),
+                    "nb_snapshots": self.snapshot_service.get_snapshot_count_by_call(
+                        call.id
+                    ),
+                }
+            )
 
         # Get child calls ordered by execution
         children = self.get_child_calls(call.id)
 
         # Build the current node
-        node = FunctionCallTree.from_dict(asdict(call))
+        node = FunctionCallTree.from_dict(
+            {
+                **asdict(call),
+                "nb_snapshots": self.snapshot_service.get_snapshot_count_by_call(
+                    call.id
+                ),
+            }
+        )
 
         # Recursively add children
         for child in children:

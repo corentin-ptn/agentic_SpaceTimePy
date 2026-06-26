@@ -92,6 +92,27 @@ class FunctionCallRepository(BaseRepository):
             )
             return [FunctionCallDTO(**sqlalchemy_to_dict(c)) for c in calls]
 
+    def search_calls_by_function_name(self, session_id: int, function_name: str) -> list[FunctionCallDTO]:
+        """
+        Search for function calls by function name within a session.
+
+        Args:
+            session_id: The unique identifier of the session.
+            function_name: The name of the function to search for (case-insensitive, partial match).
+
+        Returns:
+            list[FunctionCallDTO]: A list of matching function calls.
+        """
+        with self._get_session() as session:
+            calls = (
+                session.query(FunctionCall)
+                .filter(FunctionCall.session_id == session_id)
+                .filter(FunctionCall.function.ilike(f"%{function_name}%"))
+                .order_by(FunctionCall.order_in_session)
+                .all()
+            )
+            return [FunctionCallDTO(**sqlalchemy_to_dict(c)) for c in calls]
+
     def get_all_calls_by_session_paginated(
         self,
         session_id: int,

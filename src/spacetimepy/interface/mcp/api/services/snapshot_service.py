@@ -37,7 +37,14 @@ class SnapshotService:
         self, snapshot_id: int, edge_type: str | None = None
     ) -> list[StackSnapshotDTO]:
         """Retreive the list of nexts snapshots."""
-        return self.snapshot_repo.get_previous_snapshot(snapshot_id, edge_type)
+        if edge_type == "":
+            edge_type = None
+        return self.snapshot_repo.get_successors(snapshot_id, edge_type)
+
+
+    def get_snapshot_count_by_call(self, function_call_id: int) -> int:
+        """Retrieve the number of snapshots for a function call."""
+        return self.snapshot_repo.get_snapshot_count_by_call(function_call_id)
 
     # --- Domain logic ---
 
@@ -54,7 +61,7 @@ class SnapshotService:
             port (int): The port of the target machine.
 
         Returns:
-            true if the request succeed, an error otherwise
+            bool: True if the request succeed, an error otherwise
         """
         target_snapshot = self.snapshot_repo.get_snapshot(snapshot_id)
         if not target_snapshot:

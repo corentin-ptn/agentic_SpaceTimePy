@@ -5,6 +5,61 @@ from dataclasses import dataclass, field, fields
 
 from .dto import MonitoringSessionDTO
 
+# --- Launch Debug ---
+
+
+@dataclass
+class Position:
+    """Represents a position in a file with line and character numbers (0-based)."""
+
+    line: int
+    character: int
+
+
+@dataclass
+class Range:
+    """Represents a range in a file with start and end positions."""
+
+    start: Position
+    end: Position
+
+
+@dataclass
+class Param:
+    """Represents a parameter with its name and value. (e.g. with a list, name: 'param1', value: '[1, 2, 3]')"""
+
+    name: str
+    value: str | None
+
+
+@dataclass
+class LaunchDebugRequest:
+    """Request to start a debug session with spacetimepy's debugger tools."""
+
+    file_path: str = field(
+        metadata={
+            "description": "The path to the file containing the function to debug."
+        }
+    )
+    function_name: str = field(
+        metadata={"description": "The name of the function to debug."}
+    )
+    range: Range = field(metadata={"description": "The range of lines to debug."})
+    paramValues: list[Param] = field(
+        metadata={"description": "The values of the parameters for the function call."}
+    )
+    use_reanimation: bool = field(
+        metadata={"description": "Whether to use reanimation."}
+    )
+    selected_function_call_id: int | None = field(
+        metadata={
+            "description": "The ID of the selected function call for reanimation (reanimate from this call)."
+        }
+    )
+
+
+# --- Summary ---
+
 
 @dataclass
 class BaseSummary:
@@ -57,6 +112,7 @@ class FunctionCallDTOSummary(BaseSummary):
     return_ref: str | None
     session_id: int | None
     order_in_session: int | None
+    nb_snapshots: int | None = None
 
 
 @dataclass

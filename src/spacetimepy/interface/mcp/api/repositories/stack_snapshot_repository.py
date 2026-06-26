@@ -51,6 +51,15 @@ class StackSnapshotRepository(BaseRepository):
             successors = snapshot.get_successors(session, edge_type)
             return [StackSnapshotDTO(**sqlalchemy_to_dict(s)) for s in successors]
 
+    def get_snapshot_count_by_call(self, function_call_id: int) -> int:
+        """Retrieve the number of snapshots for a function call."""
+        with self._get_session() as session:
+            return (
+                session.query(StackSnapshot)
+                .filter(StackSnapshot.function_call_id == function_call_id)
+                .count()
+            )
+
 
 class StackSnapshotEdgeRepository(BaseRepository):
     def get_edge(self, edge_id: int) -> StackSnapshotEdgeDTO | None:

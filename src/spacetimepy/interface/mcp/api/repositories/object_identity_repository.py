@@ -106,6 +106,25 @@ class StoredObjectRepository(BaseRepository):
                 return None
             return StoredObjectDTO(**self._sqlalchemy_to_dict(data))
 
+    def get_object_history(self, identity_id: int) -> list[StoredObjectDTO]:
+        """
+        Retrieve all versions of an object associated with a given identity, ordered by version number.
+
+        Args:
+            identity_id: The unique identifier of the object entity.
+
+        Returns:
+            list[StoredObjectDTO]: A list of all versions of the object.
+        """
+        with self._get_session() as session:
+            data = (
+                session.query(StoredObject)
+                .filter(StoredObject.identity_id == identity_id)
+                .order_by(StoredObject.version_number)
+                .all()
+            )
+            return [StoredObjectDTO(**self._sqlalchemy_to_dict(d)) for d in data]
+
     def list_objects(self) -> list[StoredObjectDTO]:
         """
         List all stored objects ordered by their starting time.

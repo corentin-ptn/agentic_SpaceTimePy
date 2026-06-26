@@ -73,9 +73,24 @@ class StoredObjectService:
         """
         return self.stored_object_repo.get_last_version_object(object_identity_id)
 
+    def get_object_history(self, identity_id: int) -> list[StoredObjectDTO]:
+        """
+        Retrieve all versions of an object associated with a given identity.
+
+        Args:
+            identity_id: The unique identifier of the object entity.
+
+        Returns:
+            list[StoredObjectDTO]: A list of all versions of the object.
+        """
+        return self.stored_object_repo.get_object_history(identity_id)
+
     def list_objects(self) -> list[StoredObjectDTO]:
         """
         List all stored objects ordered by their starting time.
+
+        Args:
+            session_id: The unique identifier of the session.
 
         Returns:
             list[StoredObjectDTO]: A list of DTO representations of all stored objects.
