@@ -8,6 +8,15 @@ from .dto import (
     StackSnapshotEdgeDTO,
     StoredObjectDTO,
 )
+from .models import (
+    FunctionCallDetails,
+    FunctionCallDTOSummary,
+    FunctionCallTree,
+    LaunchDebugRequest,
+    SessionDetailsCalls,
+    SessionSummaryRelations,
+    StackSnapshotDetails,
+)
 
 __all__ = [
     "ObjectIdentityDTO",
@@ -18,4 +27,12 @@ __all__ = [
     "CodeDefinitionDTO",
     "CodeObjectLinkDTO",
     "MonitoringSessionDTO",
+    # --- Models ---
+    "FunctionCallDetails",
+    "FunctionCallDTOSummary",
+    "FunctionCallTree",
+    "LaunchDebugRequest",
+    "SessionDetailsCalls",
+    "SessionSummaryRelations",
+    "StackSnapshotDetails",
 ]

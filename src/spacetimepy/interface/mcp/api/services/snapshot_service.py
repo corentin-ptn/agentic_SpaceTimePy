@@ -1,8 +1,14 @@
+from dataclasses import asdict
+
 import requests
 
 from spacetimepy.interface.mcp.api.models.dto import (
     StackSnapshotDTO,
     StackSnapshotEdgeDTO,
+)
+from spacetimepy.interface.mcp.api.models.models import StackSnapshotDetails
+from spacetimepy.interface.mcp.api.repositories.object_identity_repository import (
+    StoredObjectRepository,
 )
 from spacetimepy.interface.mcp.api.repositories.stack_snapshot_repository import (
     StackSnapshotEdgeRepository,
@@ -16,18 +22,53 @@ class SnapshotService:
     def __init__(
         self,
         snapshot_repo: StackSnapshotRepository,
+        object_repo: StoredObjectRepository,
     ):
         self.snapshot_repo = snapshot_repo
+        self.object_repo = object_repo
 
     # --- Direct calls to repository ---
 
-    def get_snapshot(self, snapshot_id: int) -> StackSnapshotDTO | None:
+    def get_snapshot(self, snapshot_id: int) -> StackSnapshotDetails | None:
         """Retrieve a snapshot by its ID."""
-        return self.snapshot_repo.get_snapshot(snapshot_id)
+        return (
+            StackSnapshotDetails.from_dict(
+                {
+                    **asdict(self.snapshot_repo.get_snapshot(snapshot_id)),
+                    "locals_var": {
+                        k: self.object_repo.get_object(v).pickle_data
+                        for k, v in self.snapshot_repo.get_snapshot(
+                            snapshot_id
+                        ).locals_refs.items()
+                    },
+                }
+            )
+            if self.snapshot_repo.get_snapshot(snapshot_id)
+            else None
+        )
 
     def list_snapshots_by_call(self, function_call_id: int) -> list[StackSnapshotDTO]:
         """List all snapshots depending of a function call."""
         return self.snapshot_repo.list_snapshots_by_call(function_call_id)
+
+    def snapshot_detailed_list_by_call(
+        self, function_call_id: int
+    ) -> list[StackSnapshotDetails]:
+        """List all snapshots depending of a function call."""
+        f = [
+            StackSnapshotDetails.from_dict(
+                {
+                    **asdict(snapshot),
+                    "locals_var": {
+                        k: self.object_repo.get_object(v).pickle_data
+                        for k, v in snapshot.locals_refs.items()
+                    },
+                }
+            )
+            for snapshot in self.snapshot_repo.list_snapshots_by_call(function_call_id)
+        ]
+        print(f)
+        return f
 
     def get_previous_snapshot(self, snapshot_id: int) -> StackSnapshotDTO | None:
         """Retrieve the predecessor snapshot."""
@@ -40,7 +81,6 @@ class SnapshotService:
         if edge_type == "":
             edge_type = None
         return self.snapshot_repo.get_successors(snapshot_id, edge_type)
-
 
     def get_snapshot_count_by_call(self, function_call_id: int) -> int:
         """Retrieve the number of snapshots for a function call."""

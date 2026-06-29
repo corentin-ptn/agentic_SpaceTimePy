@@ -1,4 +1,5 @@
 from .code_def_service import CodeDefinitionService, CodeObjectLinkService
+from .debug_service import DebugService
 from .function_call_service import FunctionCallService
 from .object_service import ObjectIdentityService, StoredObjectService
 from .session_service import SessionService
@@ -12,4 +13,5 @@ __all__ = [
     "StoredObjectService",
     "CodeDefinitionService",
     "CodeObjectLinkService",
+    "DebugService",
 ]

@@ -12,15 +12,21 @@ from fastmcp import FastMCP
 
 from spacetimepy.core.representation import PickleConfig
 from spacetimepy.interface.mcp.api.models.dto import (
+    CodeDefinitionDTO,
     FunctionCallDTO,
+    StackSnapshotDTO,
+    StackSnapshotEdgeDTO,
     StoredObjectDTO,
 )
 from spacetimepy.interface.mcp.api.models.models import (
+    CodeDefinitionSummary,
+    FunctionCallDetails,
     FunctionCallDTOSummary,
     FunctionCallTree,
     LaunchDebugRequest,
     SessionDetailsCalls,
     SessionSummaryRelations,
+    StackSnapshotDetails,
 )
 from spacetimepy.interface.mcp.api.repositories import (
     FunctionCallRepository,
@@ -89,8 +95,8 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
     # ---------------------------------
 
     session_service = SessionService(session_repo, call_repo)
-    call_service = FunctionCallService(call_repo, snapshot_repo)
-    snapshot_service = SnapshotService(snapshot_repo)
+    call_service = FunctionCallService(call_repo, snapshot_repo, stored_object_repo)
+    snapshot_service = SnapshotService(snapshot_repo, stored_object_repo)
     snapshot_edge_service = SnapshotEdgeService(snapshot_edge_repo)
     object_identity_service = ObjectIdentityService(object_identity_repo)
     stored_object_service = StoredObjectService(stored_object_repo)
@@ -176,7 +182,7 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
     # ********************************
 
     @mcp.tool(tags={"call", "details"})
-    def call_get_data(session_id: int, call_index: int) -> FunctionCallDTO:
+    def call_get_data(session_id: int, call_index: int) -> FunctionCallDetails | None:
         """
         Retrieve the full data for a specific function call within a session.
         Use this to inspect the exact arguments and return value of a call.
@@ -184,9 +190,9 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
             session_id (int): The session ID containing the call.
             call_index (int): The zero-based index of the call in the session's sequence.
         """
-        call = call_service.get_calls_by_session_paginated(session_id, 1, call_index)
-        if len(call) >= 1:
-            return call[0]
+        call = call_service.get_call_by_index(session_id, call_index)
+        if call:
+            return call
         raise ValueError(f"session {session_id} or call n°{call_index} not found")
 
     @mcp.tool(tags={"call", "catalog"})
@@ -198,6 +204,16 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
             session_id (int): The ID of the session.
         """
         return call_service.list_calls_by_session(session_id)
+
+    @mcp.tool(tags={"call", "catalog", "details"})
+    def call_get_detailed_list_by_session(session_id: int) -> list[FunctionCallDetails]:
+        """
+        List all function calls for a session with detailed information (including values of local and global variables).
+        Use this to get a comprehensive view of the execution flow, including arguments and return values.
+        Args:
+            session_id (int): The ID of the session.
+        """
+        return call_service.list_calls_detailed_by_session(session_id)
 
     @mcp.tool(tags={"call", "catalog"})
     def call_get_paginated(session_id: int, size: int = 50, offset: int = 0):
@@ -265,7 +281,7 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
         return snapshot_service.load_snapshot(snapshotId, ip=ip, port=port)
 
     @mcp.tool(tags={"snapshot", "details"})
-    def snapshot_get(snapshot_id: int):
+    def snapshot_get(snapshot_id: int) -> StackSnapshotDetails:
         """
         Retrieve a snapshot's details by its ID.
         Use this to analyze the program state at a specific point in time.
@@ -275,7 +291,7 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
         return snapshot_service.get_snapshot(snapshot_id)
 
     @mcp.tool(tags={"snapshot", "catalog"})
-    def snapshot_list_by_call(function_call_id: int):
+    def snapshot_list_by_call(function_call_id: int) -> list[StackSnapshotDTO]:
         """
         List all snapshots associated with a specific function call.
         Use this to find the exact state of the program when a specific function was executed.
@@ -284,8 +300,20 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
         """
         return snapshot_service.list_snapshots_by_call(function_call_id)
 
+    @mcp.tool(tags={"snapshot", "catalog", "details"})
+    def snapshot_detailed_list_by_call(
+        function_call_id: int,
+    ) -> list[StackSnapshotDetails]:
+        """
+        List all snapshots associated with a specific function call, including detailed information about local and global variables.
+        Use this to get a comprehensive view of the program state during a function's execution.
+        Args:
+            function_call_id (int): The ID of the function call.
+        """
+        return snapshot_service.snapshot_detailed_list_by_call(function_call_id)
+
     @mcp.tool(tags={"snapshot", "navigation"})
-    def snapshot_get_previous(snapshot_id: int):
+    def snapshot_get_previous(snapshot_id: int) -> StackSnapshotDTO:
         """
         Retrieve the snapshot immediately preceding the given one.
         Use this to trace the program state backwards in time.
@@ -295,7 +323,9 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
         return snapshot_service.get_previous_snapshot(snapshot_id)
 
     @mcp.tool(tags={"snapshot", "navigation"})
-    def snapshot_get_successors(snapshot_id: int, edge_type: str | None = None):
+    def snapshot_get_successors(
+        snapshot_id: int, edge_type: str | None = None
+    ) -> list[StackSnapshotDTO]:
         """
         Retrieve the list of snapshots that follow the current one.
         Args:
@@ -308,42 +338,42 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
     # **       Snapshots Edge       **
     # ********************************
 
-    @mcp.tool(tags={"snapshot", "edge", "details"})
-    def snapshot_edge_get(edge_id: int):
-        """
-        Retrieve a snapshot edge by its ID.
-        Args:
-            edge_id (int): The ID of the edge.
-        """
-        return snapshot_edge_service.get_edge(edge_id)
+    # @mcp.tool(tags={"snapshot", "edge", "details"})
+    # def snapshot_edge_get(edge_id: int) -> StackSnapshotEdgeDTO:
+    #     """
+    #     Retrieve a snapshot edge by its ID.
+    #     Args:
+    #         edge_id (int): The ID of the edge.
+    #     """
+    #     return snapshot_edge_service.get_edge(edge_id)
 
-    @mcp.tool(tags={"snapshot", "edge", "catalog"})
-    def snapshot_edge_list_by_type(edge_type: str):
-        """
-        Retrieve all snapshot edges of a specific type.
-        Args:
-            edge_type (str): The type of the edge.
-        """
-        return snapshot_edge_service.list_edges_by_type(edge_type)
+    # @mcp.tool(tags={"snapshot", "edge", "catalog"})
+    # def snapshot_edge_list_by_type(edge_type: str):
+    #     """
+    #     Retrieve all snapshot edges of a specific type.
+    #     Args:
+    #         edge_type (str): The type of the edge.
+    #     """
+    #     return snapshot_edge_service.list_edges_by_type(edge_type)
 
     # ********************************
     # **         OBJECTS            **
     # ********************************
 
-    @mcp.tool(tags={"object", "details"})
-    def object_get_identity(identity_id: int):
-        """
-        Retrieve an object entity (identity) by its ID.
-        The identity represents the object across its entire lifetime, regardless of its value changes.
-        Args:
-            identity_id (int): The unique identifier of the object entity.
-        """
-        return object_identity_service.get_identity(identity_id)
+    # @mcp.tool(tags={"object", "details"})
+    # def object_get_identity(identity_id: int):
+    #     """
+    #     Retrieve an object entity (identity) by its ID.
+    #     The identity represents the object across its entire lifetime, regardless of its value changes.
+    #     Args:
+    #         identity_id (int): The unique identifier of the object entity.
+    #     """
+    #     return object_identity_service.get_identity(identity_id)
 
-    @mcp.tool(tags={"object", "catalog"})
-    def object_list_identities():
-        """List all object entities tracked in the session."""
-        return object_identity_service.list_identities()
+    # @mcp.tool(tags={"object", "catalog"})
+    # def object_list_identities():
+    #     """List all object entities tracked in the session."""
+    #     return object_identity_service.list_identities()
 
     @mcp.tool(tags={"object", "details"})
     def object_get_stored(object_id: str):
@@ -355,36 +385,36 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
         """
         return stored_object_service.get_object(object_id)
 
-    @mcp.tool(tags={"object", "details"})
-    def object_get_latest_version(object_identity_id: int):
-        """
-        Retrieve the most recent version of an object associated with a given identity.
-        Args:
-            object_identity_id (int): The unique identifier of the object entity.
-        """
-        return stored_object_service.get_latest_version(object_identity_id)
+    # @mcp.tool(tags={"object", "details"})
+    # def object_get_latest_version(object_identity_id: int):
+    #     """
+    #     Retrieve the most recent version of an object associated with a given identity.
+    #     Args:
+    #         object_identity_id (int): The unique identifier of the object entity.
+    #     """
+    #     return stored_object_service.get_latest_version(object_identity_id)
 
-    @mcp.tool(tags={"object", "details", "history"})
-    def object_get_history(object_identity_id: int) -> list[StoredObjectDTO]:
-        """
-        Retrieve the full history of an object's versions associated with a given identity.
-        Use this to track how an object's value evolves over time during the execution.
-        Args:
-            object_identity_id (int): The unique identifier of the object entity.
-        """
-        return stored_object_service.get_object_history(object_identity_id)
+    # @mcp.tool(tags={"object", "details", "history"})
+    # def object_get_history(object_identity_id: int) -> list[StoredObjectDTO]:
+    #     """
+    #     Retrieve the full history of an object's versions associated with a given identity.
+    #     Use this to track how an object's value evolves over time during the execution.
+    #     Args:
+    #         object_identity_id (int): The unique identifier of the object entity.
+    #     """
+    #     return stored_object_service.get_object_history(object_identity_id)
 
-    @mcp.tool(tags={"object", "catalog"})
-    def object_list_stored():
-        """List all stored object versions ordered by their starting time."""
-        return stored_object_service.list_objects()
+    # @mcp.tool(tags={"object", "catalog"})
+    # def object_list_stored():
+    #     """List all stored object versions ordered by their starting time."""
+    #     return stored_object_service.list_objects()
 
     # ********************************
     # **           CODE             **
     # ********************************
 
     @mcp.tool(tags={"code", "details"})
-    def code_get_definition(definition_id: str):
+    def code_get_definition(definition_id: str) -> CodeDefinitionDTO | None:
         """
         Retrieve a code definition by its unique ID.
         Use this to see the source code and metadata associated with a function or class.
@@ -394,38 +424,38 @@ def create_mcp(db_path: str, session=None) -> FastMCP:
         return code_def_service.get_definition(definition_id)
 
     @mcp.tool(tags={"code", "catalog"})
-    def code_list_definitions():
+    def code_list_definitions() -> list[CodeDefinitionSummary]:
         """List all code definitions available in the session."""
         return code_def_service.list_definitions()
 
-    @mcp.tool(tags={"code", "details"})
-    def code_get_object_link(link_id: int):
-        """
-        Retrieve a link between a stored object and its code definition.
-        Args:
-            link_id (int): The unique identifier of the link.
-        """
-        return code_obj_link_service.get_link(link_id)
+    # @mcp.tool(tags={"code", "details"})
+    # def code_get_object_link(link_id: int):
+    #     """
+    #     Retrieve a link between a stored object and its code definition.
+    #     Args:
+    #         link_id (int): The unique identifier of the link.
+    #     """
+    #     return code_obj_link_service.get_link(link_id)
 
-    @mcp.tool(tags={"code", "catalog"})
-    def code_list_links_by_object(object_id: str):
-        """
-        List all code definitions associated with a specific stored object.
-        Use this to find where an object is defined or used in the code.
-        Args:
-            object_id (str): The unique identifier of the stored object.
-        """
-        return code_obj_link_service.list_links_by_object(object_id)
+    # @mcp.tool(tags={"code", "catalog"})
+    # def code_list_links_by_object(object_id: str):
+    #     """
+    #     List all code definitions associated with a specific stored object.
+    #     Use this to find where an object is defined or used in the code.
+    #     Args:
+    #         object_id (str): The unique identifier of the stored object.
+    #     """
+    #     return code_obj_link_service.list_links_by_object(object_id)
 
-    @mcp.tool(tags={"code", "catalog"})
-    def code_list_links_by_definition(definition_id: str):
-        """
-        List all stored objects associated with a specific code definition.
-        Use this to find all runtime instances of a specific class or function.
-        Args:
-            definition_id (str): The unique identifier of the code definition.
-        """
-        return code_obj_link_service.list_links_by_definition(definition_id)
+    # @mcp.tool(tags={"code", "catalog"})
+    # def code_list_links_by_definition(definition_id: str):
+    #     """
+    #     List all stored objects associated with a specific code definition.
+    #     Use this to find all runtime instances of a specific class or function.
+    #     Args:
+    #         definition_id (str): The unique identifier of the code definition.
+    #     """
+    #     return code_obj_link_service.list_links_by_definition(definition_id)
 
     return mcp
 

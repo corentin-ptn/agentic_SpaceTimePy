@@ -1,7 +1,10 @@
+from attr import asdict
+
 from spacetimepy.interface.mcp.api.models.dto import (
     CodeDefinitionDTO,
     CodeObjectLinkDTO,
 )
+from spacetimepy.interface.mcp.api.models.models import CodeDefinitionSummary
 from spacetimepy.interface.mcp.api.repositories.code_definition_repository import (
     CodeDefinitionRepository,
     CodeObjectLinkRepository,
@@ -24,14 +27,17 @@ class CodeDefinitionService:
         """
         return self.code_def_repo.get_definition(definition_id)
 
-    def list_definitions(self) -> list[CodeDefinitionDTO]:
+    def list_definitions(self) -> list[CodeDefinitionSummary]:
         """
         List all code definitions.
 
         Returns:
-            list[CodeDefinitionDTO]: A list of DTO representations of all code definitions.
+            list[CodeDefinitionSummary]: A list of summary representations of all code definitions.
         """
-        return self.code_def_repo.list_definitions()
+        return [
+            CodeDefinitionSummary.from_dict(**asdict(definition))
+            for definition in self.code_def_repo.list_definitions()
+        ]
 
 
 class CodeObjectLinkService:

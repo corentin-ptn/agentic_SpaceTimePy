@@ -3,11 +3,15 @@ from dataclasses import asdict
 
 from spacetimepy.interface.mcp.api.models.dto import FunctionCallDTO
 from spacetimepy.interface.mcp.api.models.models import (
+    FunctionCallDetails,
     FunctionCallDTOSummary,
     FunctionCallTree,
 )
 from spacetimepy.interface.mcp.api.repositories.function_call_repository import (
     FunctionCallRepository,
+)
+from spacetimepy.interface.mcp.api.repositories.object_identity_repository import (
+    StoredObjectRepository,
 )
 from spacetimepy.interface.mcp.api.repositories.stack_snapshot_repository import (
     StackSnapshotRepository,
@@ -21,22 +25,75 @@ class FunctionCallService:
         self,
         call_repo: FunctionCallRepository,
         snapshot_service: StackSnapshotRepository,
+        object_repo: StoredObjectRepository,
     ):
         self.call_repo = call_repo
         self.snapshot_service = snapshot_service
+        self.object_repo = object_repo
 
     # --- Direct calls to repository ---
 
-    def get_call(self, call_id: int) -> FunctionCallDTO | None:
+    def get_call(self, call_id: int) -> FunctionCallDetails | None:
         """Retrieve a function call by its ID.
 
         Args:
             call_id: The ID of the function call to retrieve.
 
         Returns:
-            The FunctionCallDTO if found, otherwise None.
+            The FunctionCallDetails if found, otherwise None.
         """
-        return self.call_repo.get_call(call_id)
+        f_call = self.call_repo.get_call(call_id)
+        if not f_call:
+            return None
+
+        return FunctionCallDetails.from_dict(
+            {
+                **asdict(f_call),
+                "nb_snapshots": self.snapshot_service.get_snapshot_count_by_call(
+                    f_call.id
+                ),
+                "locals_var": {
+                    k: self.object_repo.get_object(v).pickle_data
+                    for k, v in f_call.locals_refs.items()
+                },
+                "return_var": self.object_repo.get_object(f_call.return_ref).pickle_data
+                if f_call.return_ref
+                else None,
+            }
+        )
+
+    def get_call_by_index(
+        self, session_id: int, order_in_session: int
+    ) -> FunctionCallDetails | None:
+        """Retrieve a function call by its session ID and order in session.
+
+        Args:
+            session_id: The ID of the session.
+            order_in_session: The order of the function call in the session.
+        Returns:
+            The FunctionCallDetails if found, otherwise None.
+        """
+        f_call = self.call_repo.get_calls_by_session_paginated(
+            session_id, 1, order_in_session
+        )[0]
+        if not f_call:
+            return None
+
+        return FunctionCallDetails.from_dict(
+            {
+                **asdict(f_call),
+                "nb_snapshots": self.snapshot_service.get_snapshot_count_by_call(
+                    f_call.id
+                ),
+                "locals_var": {
+                    k: self.object_repo.get_object(v).pickle_data
+                    for k, v in f_call.locals_refs.items()
+                },
+                "return_var": self.object_repo.get_object(f_call.return_ref).pickle_data
+                if f_call.return_ref
+                else None,
+            }
+        )
 
     def get_calls_count_by_session(self, session_id: int) -> dict[str, int]:
         """Retrieve the number of function calls for a session.
@@ -56,15 +113,48 @@ class FunctionCallService:
             session_id: The ID of the session.
 
         Returns:
-            A list of FunctionCallDTOs for the session.
+            A list of FunctionCallDTOSummary for the session.
         """
         return [
-            FunctionCallDTOSummary.from_dict({
-                **asdict(f_call),
-                "nb_snapshots": self.snapshot_service.get_snapshot_count_by_call(
-                    f_call.id
-                ),
-            })
+            FunctionCallDTOSummary.from_dict(
+                {
+                    **asdict(f_call),
+                    "nb_snapshots": self.snapshot_service.get_snapshot_count_by_call(
+                        f_call.id
+                    ),
+                }
+            )
+            for f_call in self.call_repo.list_calls_by_session(session_id)
+        ]
+
+    def list_calls_detailed_by_session(
+        self, session_id: int
+    ) -> list[FunctionCallDetails]:
+        """
+        List all function calls for a session with detailed information.
+
+        Args:
+            session_id: The ID of the session.
+
+        Returns:
+            A list of FunctionCallDetails for the session.
+        """
+        return [
+            FunctionCallDetails.from_dict(
+                {
+                    **asdict(f_call),
+                    "nb_snapshots": self.snapshot_service.get_snapshot_count_by_call(
+                        f_call.id
+                    ),
+                    "locals_var": {
+                        k: self.object_repo.get_object(v).pickle_data
+                        for k, v in f_call.locals_refs.items()
+                    },
+                    "return_var": self.object_repo.get_object(f_call.return_ref).pickle_data
+                    if f_call.return_ref
+                    else None,
+                }
+            )
             for f_call in self.call_repo.list_calls_by_session(session_id)
         ]
 

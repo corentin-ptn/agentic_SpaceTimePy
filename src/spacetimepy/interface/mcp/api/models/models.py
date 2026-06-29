@@ -1,7 +1,7 @@
 """Models used by the Service and the Controller"""
 
-import datetime
 from dataclasses import dataclass, field, fields
+from typing import Any
 
 from .dto import MonitoringSessionDTO
 
@@ -10,7 +10,7 @@ from .dto import MonitoringSessionDTO
 
 @dataclass
 class Position:
-    """Represents a position in a file with line and character numbers (0-based)."""
+    """Represents a position in a file with line and character numbers (1-based)."""
 
     line: int
     character: int
@@ -26,7 +26,7 @@ class Range:
 
 @dataclass
 class Param:
-    """Represents a parameter with its name and value. (e.g. with a list, name: 'param1', value: '[1, 2, 3]')"""
+    """Represents a parameter with its name and value. (e.g. with a list, name: 'param1', value: '[1, 2, 3]', or value: 'None' if the parameter is not provided)"""
 
     name: str
     value: str | None
@@ -90,7 +90,6 @@ class SessionSummaryRelations(BaseSummary):
 
     id: int
     name: str | None
-    start_time: datetime
     relations: Relation = field(default_factory=Relation)
 
 
@@ -108,13 +107,48 @@ class SessionDetailsCalls(MonitoringSessionDTO):
 class FunctionCallDTOSummary(BaseSummary):
     id: int
     function: str
-    start_time: datetime
-    return_ref: str | None
     session_id: int | None
     order_in_session: int | None
-    nb_snapshots: int | None = None
+    first_snapshot_id: int | None
+    nb_snapshots: int | None
+
+
+@dataclass
+class FunctionCallDetails(FunctionCallDTOSummary):
+    file: str | None
+    line: int | None
+    call_metadata: dict[str, Any] | None
+    locals_var: dict[str, Any]
+    return_var: Any
+    code_definition_id: str | None
+    parent_call_id: int | None
+    order_in_parent: int | None
 
 
 @dataclass
 class FunctionCallTree(FunctionCallDTOSummary):
     children: list["FunctionCallTree"] = field(default_factory=list)
+
+
+# --- StackSnapshot ---
+
+
+@dataclass
+class StackSnapshotDetails(BaseSummary):
+    id: int
+    function_call_id: int
+    code_definition_id: str | None
+    line_number: int
+    locals_var: dict[str, Any]
+    order_in_call: int | None
+    next_snapshot_id: int | None
+
+# --- Code Definition ---
+
+@dataclass
+class CodeDefinitionSummary(BaseSummary):
+    id: str
+    name: str
+    type: str
+    module_path: str
+    first_line_no: int | None
